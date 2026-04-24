@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<text name="CRUISECONTROLPLUS_HUD_SET">
+		<en>Cruise set to %d km/h</en>
+	</text>
+	<text name="CRUISECONTROLPLUS_SPEED_TOO_LOW">
+		<en>Speed too low</en>
+	</text>
+	<text name="input_CRUISECONTROLPLUS_SET_TO_CURRENT">
+		<en>Set cruise control to current speed</en>
+	</text>
+</l10n>

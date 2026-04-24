@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="105">
+	<author>ControlsSearch</author>
+	<version>0.1.0.0</version>
+	<title>
+		<en>Controls Search</en>
+		<de>Steuerung suchen</de>
+	</title>
+	<description>
+		<en>Search/filter in Settings → Controls. Press F in the controls screen to open search overlay.</en>
+		<de>Suche in Einstellungen → Steuerung. Im Steuerungs-Bildschirm F drücken für Such-Overlay.</de>
+	</description>
+	<l10n filenamePrefix="l10n/l10n">
+		<text name="CONTROLSSEARCH_TITLE">
+			<en>Controls Search (F to close)</en>
+			<de>Steuerung suchen (F zum Schließen)</de>
+		</text>
+		<text name="CONTROLSSEARCH_SEARCH">
+			<en>Search:</en>
+			<de>Suche:</de>
+		</text>
+		<text name="CONTROLSSEARCH_ALL">
+			<en>(all)</en>
+			<de>(alle)</de>
+		</text>
+		<text name="CONTROLSSEARCH_CONFLICT">
+			<en>Conflict</en>
+			<de>Konflikt</de>
+		</text>
+		<text name="CONTROLSSEARCH_NO_MATCHES">
+			<en>No matches</en>
+			<de>Keine Treffer</de>
+		</text>
+	</l10n>
+	<extraSourceFiles>
+		<sourceFile filename="register.lua"/>
+	</extraSourceFiles>
+</modDesc>

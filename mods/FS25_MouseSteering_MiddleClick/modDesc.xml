@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="105">
+	<author>MouseSteering</author>
+	<version>0.9.0.0</version>
+	<title>
+		<en>Mouse Steering (Middle-Click)</en>
+		<de>Mauslenkung (Mittelklick)</de>
+	</title>
+	<description>
+		<en>Realistic mouse steering for keyboard+mouse: armed automatically when you enter a vehicle (Ctrl+M or middle-click to turn off). Hold LMB to steer with relative mouse movement. Steering returns smoothly to center when LMB is released. Includes a projected driving path on the ground (like a reversing camera) that curves with your steering input. All options configurable via Settings -> General.</en>
+		<de>Realistische Mauslenkung für Tastatur+Maus: beim Einsteigen automatisch scharf (Strg+M oder Mittelklick zum Abschalten). LMB gedrückt halten zum Lenken mit relativer Mausbewegung. Lenkung läuft weich in die Mitte zurück beim Loslassen. Projiziert zusätzlich eine Fahrspur auf den Boden (wie eine Rückfahrkamera), die sich mit dem Lenkeinschlag mitbiegt. Alle Optionen in den Spiel-Einstellungen -> Allgemein konfigurierbar.</de>
+	</description>
+	<l10n filenamePrefix="l10n/l10n">
+		<!-- Input actions -->
+		<text name="input_MOUSESTEERING_TOGGLE_ARMED">
+			<en>Mouse Steering: Toggle Armed</en>
+			<de>Mauslenkung: Scharfschalten ein/aus</de>
+		</text>
+
+		<!-- HUD bar labels and warnings -->
+		<text name="MOUSESTEERING_HUD_ARMED">
+			<en>MS Armed</en>
+			<de>MS scharf</de>
+		</text>
+		<text name="MOUSESTEERING_HUD_ACTIVE">
+			<en>MS Active</en>
+			<de>MS aktiv</de>
+		</text>
+		<text name="MOUSESTEERING_HUD_HINT">
+			<en>Ctrl+M = Mouse Steering off/on</en>
+			<de>Strg+M = Mauslenkung aus/an</de>
+		</text>
+		<text name="MOUSESTEERING_WARNING_MOTOR_NOT_STARTED">
+			<en>Start the engine first</en>
+			<de>Starte zuerst den Motor</de>
+		</text>
+
+		<!-- Game Settings section header -->
+		<text name="ms_section_title">
+			<en>Mouse Steering</en>
+			<de>Mauslenkung</de>
+		</text>
+
+		<!-- Sensitivity controls -->
+		<text name="ms_rateSensitivity_short">
+			<en>Sensitivity</en>
+			<de>Empfindlichkeit</de>
+		</text>
+		<text name="ms_rateSensitivity_long">
+			<en>How quickly mouse movement translates to steering angle. Low = smooth, high = snappy.</en>
+			<de>Wie schnell die Mausbewegung in Lenkeinschlag übersetzt wird. Niedrig = ruhig, hoch = zackig.</de>
+		</text>
+		<text name="ms_deadzone_short">
+			<en>Output deadzone</en>
+			<de>Ausgabe-Totzone</de>
+		</text>
+		<text name="ms_deadzone_long">
+			<en>Steering output below this value is clamped to zero. Prevents front wheel jitter.</en>
+			<de>Ein Lenkausschlag kleiner als dieser Wert wird auf Null gesetzt. Verhindert Zittern der Vorderräder.</de>
+		</text>
+		<text name="ms_mouseDeadzone_short">
+			<en>Mouse deadzone</en>
+			<de>Maus-Totzone</de>
+		</text>
+		<text name="ms_mouseDeadzone_long">
+			<en>Mouse movement below this value is ignored. Useful for high-DPI mice.</en>
+			<de>Kleine Mausbewegungen unter diesem Wert werden ignoriert. Nützlich bei empfindlichen Mäusen.</de>
+		</text>
+
+		<!-- Feature toggles -->
+		<text name="ms_hudBarEnabled_short">
+			<en>Steering bar HUD</en>
+			<de>Lenkbalken-Anzeige</de>
+		</text>
+		<text name="ms_hudBarEnabled_long">
+			<en>Top-of-screen bar showing the current steering angle. Visible only while actively steering.</en>
+			<de>Oberer Bildschirmrand: grüner Balken zeigt den aktuellen Lenkeinschlag. Nur sichtbar beim aktiven Lenken.</de>
+		</text>
+		<text name="ms_pathIndicatorMode_short">
+			<en>Driving path projection</en>
+			<de>Fahrspur-Projektion</de>
+		</text>
+		<text name="ms_pathIndicatorMode_long">
+			<en>When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = only during active mouse steering, Always = while in any vehicle.</en>
+			<de>Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = nur bei aktiver Mauslenkung, Immer = solange im Fahrzeug.</de>
+		</text>
+		<!-- Values for the pathIndicatorMode choice control (order must match Settings.lua) -->
+		<text name="ms_pathMode_off">
+			<en>Off</en>
+			<de>Aus</de>
+		</text>
+		<text name="ms_pathMode_steering">
+			<en>On steering</en>
+			<de>Bei Lenkeinschlag</de>
+		</text>
+		<text name="ms_pathMode_mouse">
+			<en>Mouse only</en>
+			<de>Nur Maus</de>
+		</text>
+		<text name="ms_pathMode_always">
+			<en>Always</en>
+			<de>Immer</de>
+		</text>
+
+		<!-- Trailer path projection -->
+		<text name="ms_trailerPathEnabled_short">
+			<en>Trailer path (reverse)</en>
+			<de>Anhänger-Pfad (Rückwärts)</de>
+		</text>
+		<text name="ms_trailerPathEnabled_long">
+			<en>When reversing with a trailer attached, project a yellow line showing where the trailer's rear edges will swing. Uses the trailer's current hitch angle and the vehicle steering arc — updates live.</en>
+			<de>Beim Rückwärtsfahren mit Anhänger wird eine gelbe Linie projiziert, die zeigt, wohin die Anhänger-Hinterkante ausschwenkt. Basiert auf dem aktuellen Knickwinkel und dem Zugfahrzeug-Lenkbogen — aktualisiert live.</de>
+		</text>
+	</l10n>
+	<extraSourceFiles>
+		<sourceFile filename="register.lua"/>
+	</extraSourceFiles>
+	<actions>
+		<action name="MOUSESTEERING_TOGGLE_ARMED" category="VEHICLE" axisType="HALF"/>
+	</actions>
+	<inputBinding>
+		<actionBinding action="MOUSESTEERING_TOGGLE_ARMED">
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_lctrl KEY_m" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_lctrl KEY_lshift KEY_m" axisComponent="+" neutralInput="0" index="2"/>
+			<binding device="KB_MOUSE_DEFAULT" input="MOUSE_BUTTON_2" axisComponent="+" neutralInput="0" index="3"/>
+		</actionBinding>
+	</inputBinding>
+</modDesc>

@@ -1,0 +1,9 @@
+# Unused FS25 Mods
+# Generated: 2026-02-20 18:32:06.186006
+# Total unused: 5
+
+FS25_NXProductions
+FS25_ZYX_FillTypesPatch
+FS25_theMemory
+FS25_unlimitedTreePlacement
+FS25_woodChipsMission

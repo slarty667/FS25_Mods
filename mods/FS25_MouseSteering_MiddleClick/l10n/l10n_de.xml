@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<!-- Input actions -->
+	<text name="input_MOUSESTEERING_TOGGLE_ARMED">Mauslenkung: Scharfschalten ein/aus</text>
+
+	<!-- HUD bar labels and warnings -->
+	<text name="MOUSESTEERING_HUD_ARMED">MS scharf</text>
+	<text name="MOUSESTEERING_HUD_ACTIVE">MS aktiv</text>
+	<text name="MOUSESTEERING_HUD_HINT">Strg+M = Mauslenkung aus/an</text>
+	<text name="MOUSESTEERING_WARNING_MOTOR_NOT_STARTED">Starte zuerst den Motor</text>
+
+	<!-- Game Settings section header -->
+	<text name="ms_section_title">Mauslenkung</text>
+
+	<!-- Sensitivity controls -->
+	<text name="ms_rateSensitivity_short">Empfindlichkeit</text>
+	<text name="ms_rateSensitivity_long">Wie schnell die Mausbewegung in Lenkeinschlag übersetzt wird. Niedrig = ruhig, hoch = zackig.</text>
+
+	<text name="ms_deadzone_short">Ausgabe-Totzone</text>
+	<text name="ms_deadzone_long">Ein Lenkausschlag kleiner als dieser Wert wird auf Null gesetzt. Verhindert Zittern der Vorderräder.</text>
+
+	<text name="ms_mouseDeadzone_short">Maus-Totzone</text>
+	<text name="ms_mouseDeadzone_long">Kleine Mausbewegungen unter diesem Wert werden ignoriert. Nützlich bei empfindlichen Mäusen.</text>
+
+
+	<!-- Feature toggles -->
+	<text name="ms_hudBarEnabled_short">Lenkbalken-Anzeige</text>
+	<text name="ms_hudBarEnabled_long">Oberer Bildschirmrand: grüner Balken zeigt den aktuellen Lenkeinschlag. Nur sichtbar beim aktiven Lenken.</text>
+
+	<text name="ms_pathIndicatorMode_short">Fahrspur-Projektion</text>
+	<text name="ms_pathIndicatorMode_long">Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = nur bei aktiver Mauslenkung, Immer = solange im Fahrzeug.</text>
+	<text name="ms_pathMode_off">Aus</text>
+	<text name="ms_pathMode_steering">Bei Lenkeinschlag</text>
+	<text name="ms_pathMode_mouse">Nur Maus</text>
+	<text name="ms_pathMode_always">Immer</text>
+
+	<text name="ms_trailerPathEnabled_short">Anhänger-Pfad (Rückwärts)</text>
+	<text name="ms_trailerPathEnabled_long">Beim Rückwärtsfahren mit Anhänger wird eine gelbe Linie projiziert, die zeigt, wohin die Anhänger-Hinterkante ausschwenkt. Basiert auf dem aktuellen Knickwinkel und dem Zugfahrzeug-Lenkbogen — aktualisiert live.</text>
+</l10n>

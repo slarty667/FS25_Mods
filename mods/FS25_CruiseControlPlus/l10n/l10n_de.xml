@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<text name="CRUISECONTROLPLUS_HUD_SET">
+		<de>Tempomat auf %d km/h gesetzt</de>
+	</text>
+	<text name="CRUISECONTROLPLUS_SPEED_TOO_LOW">
+		<de>Geschwindigkeit zu niedrig</de>
+	</text>
+	<text name="input_CRUISECONTROLPLUS_SET_TO_CURRENT">
+		<de>Tempomat auf aktuelle Geschwindigkeit setzen</de>
+	</text>
+</l10n>

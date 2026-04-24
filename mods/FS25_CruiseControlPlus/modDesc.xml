@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="105">
+	<author>CruiseControlPlus</author>
+	<version>1.0.0.0</version>
+	<title>
+		<en>Cruise Control Plus</en>
+		<de>Tempomat Plus</de>
+	</title>
+	<description>
+		<en>Set cruise control to current speed and activate with one key (default: 4). Configurable speed rounding, min/max, optional HUD notification. KEY_3 remains vanilla (toggle on/off).</en>
+		<de>Mit einer Taste (Standard: 4) Tempomat auf aktuelle Geschwindigkeit setzen und aktivieren. Konfigurierbares Runden, Min/Max, optionale HUD-Meldung. KEY_3 bleibt unverändert (An/Aus).</de>
+	</description>
+	<l10n filenamePrefix="l10n/l10n">
+		<text name="CRUISECONTROLPLUS_HUD_SET">
+			<en>Cruise set to %d km/h</en>
+			<de>Tempomat auf %d km/h gesetzt</de>
+		</text>
+		<text name="CRUISECONTROLPLUS_SPEED_TOO_LOW">
+			<en>Speed too low</en>
+			<de>Geschwindigkeit zu niedrig</de>
+		</text>
+		<text name="input_CRUISECONTROLPLUS_SET_TO_CURRENT">
+			<en>Set cruise control to current speed</en>
+			<de>Tempomat auf aktuelle Geschwindigkeit setzen</de>
+		</text>
+	</l10n>
+	<actions>
+		<action name="CRUISECONTROLPLUS_SET_TO_CURRENT" category="VEHICLE"/>
+	</actions>
+	<inputBinding>
+		<actionBinding action="CRUISECONTROLPLUS_SET_TO_CURRENT">
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_4"/>
+		</actionBinding>
+	</inputBinding>
+	<extraSourceFiles>
+		<sourceFile filename="register.lua"/>
+	</extraSourceFiles>
+</modDesc>

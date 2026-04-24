@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<text name="input_NAVIHELPER_TOGGLE_UI">NaviHelper: UI ein/aus</text>
+	<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">NaviHelper: Ziel per Karte setzen</text>
+	<text name="input_NAVIHELPER_CLEAR_TARGET">NaviHelper: Ziel löschen</text>
+	<text name="input_NAVIHELPER_SET_TARGET_AHEAD">NaviHelper: Ziel voraus setzen</text>
+	<text name="NAVIHELPER_MSG_DESTINATION_REACHED">Ziel erreicht</text>
+</l10n>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<text name="CONTROLSSEARCH_TITLE">
+		<de>Steuerung suchen (F zum Schließen)</de>
+	</text>
+	<text name="CONTROLSSEARCH_SEARCH">
+		<de>Suche:</de>
+	</text>
+	<text name="CONTROLSSEARCH_ALL">
+		<de>(alle)</de>
+	</text>
+	<text name="CONTROLSSEARCH_CONFLICT">
+		<de>Konflikt</de>
+	</text>
+	<text name="CONTROLSSEARCH_NO_MATCHES">
+		<de>Keine Treffer</de>
+	</text>
+</l10n>

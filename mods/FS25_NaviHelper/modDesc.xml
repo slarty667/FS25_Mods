@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="105">
+	<author>NaviHelper</author>
+	<version>1.0.0.0</version>
+	<iconFilename>storeItem.png</iconFilename>
+	<iconFilenameSmall>storeItem.png</iconFilenameSmall>
+	<title>
+		<en>NaviHelper</en>
+		<de>NaviHelper</de>
+	</title>
+	<description>
+		<en>Manual driving navigation: turn-by-turn guidance using AutoDrive routes when available, or air-line arrow to destination. Set destination by map click.</en>
+		<de>Manuelle Fahrt-Navigation: Wegbeschreibung per AutoDrive-Routen wenn vorhanden, sonst Luftlinie zum Ziel. Ziel per Kartenklick setzen.</de>
+	</description>
+	<l10n filenamePrefix="l10n/l10n">
+		<text name="input_NAVIHELPER_TOGGLE_UI">
+			<en>NaviHelper: Toggle UI</en>
+			<de>NaviHelper: UI ein/aus</de>
+		</text>
+		<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">
+			<en>NaviHelper: Set target from map</en>
+			<de>NaviHelper: Ziel per Karte setzen</de>
+		</text>
+		<text name="input_NAVIHELPER_CLEAR_TARGET">
+			<en>NaviHelper: Clear target</en>
+			<de>NaviHelper: Ziel löschen</de>
+		</text>
+		<text name="input_NAVIHELPER_SET_TARGET_AHEAD">
+			<en>NaviHelper: Set target ahead</en>
+			<de>NaviHelper: Ziel voraus setzen</de>
+		</text>
+		<text name="NAVIHELPER_MSG_NEED_AUTODRIVE">
+			<en>NaviHelper: AutoDrive is required. Please install AutoDrive or set a target via map (Alt+M).</en>
+			<de>NaviHelper: AutoDrive wird benötigt. Bitte AutoDrive installieren oder Ziel per Karte setzen (Alt+M).</de>
+		</text>
+		<text name="NAVIHELPER_MSG_SELECT_TARGET_IN_AD">
+			<en>NaviHelper: Please select a destination in AutoDrive (e.g. in "Fahren" window).</en>
+			<de>NaviHelper: Bitte in AutoDrive ein Ziel wählen (z. B. im Fenster „Fahren“).</de>
+		</text>
+	</l10n>
+	<extraSourceFiles>
+		<sourceFile filename="register.lua"/>
+	</extraSourceFiles>
+	<actions>
+		<action name="NAVIHELPER_TOGGLE_UI" category="VEHICLE" axisType="HALF"/>
+		<action name="NAVIHELPER_SET_TARGET_FROM_MAP" category="VEHICLE" axisType="HALF"/>
+		<action name="NAVIHELPER_CLEAR_TARGET" category="VEHICLE" axisType="HALF"/>
+		<action name="NAVIHELPER_SET_TARGET_AHEAD" category="VEHICLE" axisType="HALF"/>
+	</actions>
+	<inputBinding>
+		<actionBinding action="NAVIHELPER_TOGGLE_UI">
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_n" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_ralt KEY_n" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_f10" axisComponent="+" neutralInput="0" index="1"/>
+		</actionBinding>
+		<actionBinding action="NAVIHELPER_SET_TARGET_FROM_MAP">
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_m" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_ralt KEY_m" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_f9" axisComponent="+" neutralInput="0" index="1"/>
+		</actionBinding>
+		<actionBinding action="NAVIHELPER_CLEAR_TARGET">
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_lctrl KEY_n" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_rctrl KEY_n" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_f11" axisComponent="+" neutralInput="0" index="1"/>
+		</actionBinding>
+		<actionBinding action="NAVIHELPER_SET_TARGET_AHEAD">
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_lalt KEY_t" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_ralt KEY_t" axisComponent="+" neutralInput="0" index="1"/>
+			<binding device="KB_MOUSE_DEFAULT" input="KEY_f12" axisComponent="+" neutralInput="0" index="1"/>
+		</actionBinding>
+	</inputBinding>
+</modDesc>

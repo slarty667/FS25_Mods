@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Release zips built by tools/zip-mod.sh
+*.zip
+
+# Sandbox / scratch area (explicitly not part of versioned mods)
+tmp/
+
+# FS25 log artefacts that might land in the repo by accident
+log.txt
+**/modSettings/
+
+# Cursor IDE local state
+.cursor/
+
+# Editor leftovers
+*.swp
+*~
+.idea/
+.vscode/

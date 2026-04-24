@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+	<!-- Input actions -->
+	<text name="input_MOUSESTEERING_TOGGLE_ARMED">Mouse Steering: Toggle Armed</text>
+
+	<!-- HUD bar labels and warnings -->
+	<text name="MOUSESTEERING_HUD_ARMED">MS Armed</text>
+	<text name="MOUSESTEERING_HUD_ACTIVE">MS Active</text>
+	<text name="MOUSESTEERING_HUD_HINT">Ctrl+M = Mouse Steering off/on</text>
+	<text name="MOUSESTEERING_WARNING_MOTOR_NOT_STARTED">Start the engine first</text>
+
+	<!-- Game Settings section header -->
+	<text name="ms_section_title">Mouse Steering</text>
+
+	<!-- Sensitivity controls -->
+	<text name="ms_rateSensitivity_short">Sensitivity</text>
+	<text name="ms_rateSensitivity_long">How quickly mouse movement translates to steering angle. Low = smooth, high = snappy.</text>
+
+	<text name="ms_deadzone_short">Output deadzone</text>
+	<text name="ms_deadzone_long">Steering output below this value is clamped to zero. Prevents front wheel jitter.</text>
+
+	<text name="ms_mouseDeadzone_short">Mouse deadzone</text>
+	<text name="ms_mouseDeadzone_long">Mouse movement below this value is ignored. Useful for high-DPI mice.</text>
+
+
+	<!-- Feature toggles -->
+	<text name="ms_hudBarEnabled_short">Steering bar HUD</text>
+	<text name="ms_hudBarEnabled_long">Top-of-screen bar showing the current steering angle. Visible only while actively steering.</text>
+
+	<text name="ms_pathIndicatorMode_short">Driving path projection</text>
+	<text name="ms_pathIndicatorMode_long">When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = only during active mouse steering, Always = while in any vehicle.</text>
+	<text name="ms_pathMode_off">Off</text>
+	<text name="ms_pathMode_steering">On steering</text>
+	<text name="ms_pathMode_mouse">Mouse only</text>
+	<text name="ms_pathMode_always">Always</text>
+
+	<text name="ms_trailerPathEnabled_short">Trailer path (reverse)</text>
+	<text name="ms_trailerPathEnabled_long">When reversing with a trailer attached, project a yellow line showing where the trailer's rear edges will swing. Uses the trailer's current hitch angle and the vehicle steering arc — updates live.</text>
+</l10n>
