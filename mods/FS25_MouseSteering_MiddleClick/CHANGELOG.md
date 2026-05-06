@@ -1,12 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Frontloader vs. LMB mouse steering:** With cab/tractor (or trailer)
+  selection, fork/arm could still move from horizontal mouse steering because
+  part of the input path uses **`g_inputBinding.actionEvents`** targets on the
+  **implement** (`AXIS_FRONTLOADER_ARM`, `AXIS_FRONTLOADER_TOOL`,
+  `AXIS_FRONTLOADER_TOOL2`), not only `lastInputValues` on specs. The mod now
+  wraps those callbacks for the controlled vehicle’s hierarchy and **re-wraps**
+  after Giants replaces callbacks when switching implements (trailer ↔ tractor ↔
+  loader ↔ fork).
+
+### Technical
+
+- Removed temporary Cursor debug-session logger (`MouseSteeringDebugAgent`).
+
 ## 0.9.0 — 2026-04-25
 
 First public beta.
 
 ### Features
 
-- Realistic mouse-held steering with rate-based input model.
+- Realistic mouse-held steering with **rate-based** input (cursor offset =
+  steer rate; wheel holds angle until you move the mouse again).
+- **Smooth return after LMB release (“coast”):** steering output decays toward
+  centre; speed follows the game steering-return option when available, else a
+  configurable fallback % (tuned to feel close to keyboard return).
+- **LMB takeover:** on LMB down, reads the current wheel angle from the vehicle
+  so steering does not jump to straight.
+- **Steering-linked cabin camera (“look into the corner”):** optional extra
+  `rotY` after `VehicleCamera:update`; reverses flip with travel direction;
+  anchored blend toward interior default during coast.
 - **Projected driving path**: two green ground lines showing the outer edges
   of the vehicle's future position, based on current steering angle.
 - **Vehicle-aware path length**: scales with the vehicle's own top speed, so
@@ -23,7 +49,7 @@ First public beta.
   tongue length per trailer type (single-axle ≈ 65%, two-axle with
   turntable ≈ 80% of trailer length).
 - **Visibility modes** (via settings): Off / On-steering (any input source) /
-  Mouse only / Always in vehicle.
+  Mouse only (includes post-LMB coast) / Always in vehicle.
 
 ### Sensitivity & behaviour
 
@@ -36,9 +62,16 @@ First public beta.
 
 ### Quality of life
 
-- **Auto-disarm with frontloader**: mouse steering off by default when a
-  frontloader is attached; re-enable manually with Ctrl+M if you want it.
-- **Auto-disarm on vehicle leave**; auto-arm on re-enter (unless frontloader).
+- **Frontloader coexistence:** mouse steering stays **armed by default** with a
+  frontloader fitted. While the **frontloader arm** or a **tool on that arm** is
+  the selected implement, mouse steering input is **suppressed** so vanilla can
+  drive the loader with the mouse. Select the **tractor** or **trailer** again
+  and mouse steering works without toggling.
+- **Frontloader hydraulics vs. LMB steer:** with cab/tractor focus, mouse-driven
+  `axis*` inputs on loader/fork `lastInputValues` are zeroed each frame while
+  LMB mouse steering is active, so forks should not move up/down from steering.
+- **Auto-disarm on vehicle leave**; **auto-arm on enter** for the next vehicle
+  (clean baseline via `onControlledVehicleChanged`).
 - **LMB + RMB = free look**: hold both for hands-on-wheel, head-turning.
   FS25's cursor-toggle is suppressed while steering is active.
 - **Safety net against sprünge**: when re-gripping LMB, steering waits for
@@ -53,6 +86,9 @@ First public beta.
 
 ### Technical
 
+- **Frontloader selection detection:** `rootVehicle:getSelectedVehicle()` plus
+  a DFS over `spec_attacherJoints.attachedImplements` from each vehicle
+  classified as a frontloader in `VehicleIntrospection:getAttachedImplementsInfo`.
 - Clean split between data (`MouseSteeringSettings`) and UI
   (`MouseSteeringSettingsUI`) to avoid UIHelper overwriting numeric values.
 - I3D line rendering via AutoDrive's `drawing/line.i3d` when present;

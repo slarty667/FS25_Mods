@@ -25,10 +25,10 @@
 
 	<!-- Feature toggles -->
 	<text name="ms_hudBarEnabled_short">Steering bar HUD</text>
-	<text name="ms_hudBarEnabled_long">Top-of-screen bar showing the current steering angle. Visible only while actively steering.</text>
+	<text name="ms_hudBarEnabled_long">Top-of-screen bar showing the current steering angle while LMB steering or during the short return-to-centre after you release LMB.</text>
 
 	<text name="ms_pathIndicatorMode_short">Driving path projection</text>
-	<text name="ms_pathIndicatorMode_long">When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = only during active mouse steering, Always = while in any vehicle.</text>
+	<text name="ms_pathIndicatorMode_long">When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = during LMB mouse steering and the short coast after release, Always = while in any vehicle.</text>
 	<text name="ms_pathMode_off">Off</text>
 	<text name="ms_pathMode_steering">On steering</text>
 	<text name="ms_pathMode_mouse">Mouse only</text>
@@ -36,4 +36,18 @@
 
 	<text name="ms_trailerPathEnabled_short">Trailer path (reverse)</text>
 	<text name="ms_trailerPathEnabled_long">When reversing with a trailer attached, project a yellow line showing where the trailer's rear edges will swing. Uses the trailer's current hitch angle and the vehicle steering arc — updates live.</text>
+
+	<text name="ms_steeringHeadTurnEnabled_short">Look into corner (camera)</text>
+	<text name="ms_steeringHeadTurnEnabled_long">While holding LMB to steer, yaw the cabin camera slightly with steering so the view follows the bend (like looking through a corner on a bike). Mouse look stays suppressed for LMB-only steering; use RMB+LMB for free-look.</text>
+	<text name="ms_steeringHeadTurnMaxDeg_short">Corner look — max angle</text>
+	<text name="ms_steeringHeadTurnMaxDeg_long">Extra camera yaw at full steering (degrees each side). A natural “in the bend” glance is often ~25–40°. For a proper look at cross traffic (like a shoulder check), try ~70–100°; ~90° is a strong sideways view.</text>
+	<text name="ms_steeringHeadTurnResponse_short">Corner look — response</text>
+	<text name="ms_steeringHeadTurnResponse_long">How quickly the camera follows steering and returns when you release. Higher = snappier.</text>
+	<text name="ms_steeringHeadTurnInvert_short">Invert corner look</text>
+	<text name="ms_steeringHeadTurnInvert_long">Flip left/right if the camera turns the wrong way for your vehicle or camera mod.</text>
+
+	<text name="ms_steeringReleaseUseGameSetting_short">Use game steering return</text>
+	<text name="ms_steeringReleaseUseGameSetting_long">After releasing LMB, try to read the same steering return / centre speed as in Options (when the game exposes it). If off, only the value below is used.</text>
+	<text name="ms_steeringReleasePercent_short">Steering return (fallback %)</text>
+	<text name="ms_steeringReleasePercent_long">How fast mouse steering eases back to centre after LMB release. Higher = faster (aligned with in-game steering return). Used when game read is disabled or unavailable. Scaling is tuned to feel close to keyboard return speed.</text>
 </l10n>

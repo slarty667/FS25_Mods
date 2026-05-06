@@ -25,6 +25,112 @@ VehicleIntrospection.DEFAULTS = {
     maxSteerAngle = math.rad(40),  -- ~0.698 rad
 }
 
+-- Vehicle specs are metatable-backed: pairs(vehicle) does not list spec_* (see docs/learned.md).
+-- Loader hydraulic mouse axes live on these specs; probe by explicit field name only.
+local LOADER_AXIS_SPEC_NAMES = {
+    "spec_attachableFrontloader",
+    "spec_attachableFrontLoader",
+    "spec_attachable",
+    "spec_cylindered",
+    "spec_shovel",
+    "spec_baleGrab",
+    "spec_fork",
+    "spec_palletFork",
+    "spec_grapple",
+    "spec_grab",
+    "spec_logGrab",
+    "spec_movingTool",
+    "spec_movingTools",
+    "spec_pickup",
+    "spec_pickUp",
+    "spec_dynamicMountAttacher",
+    "spec_implementDynamicMountAttacher",
+    "spec_leveler",
+    "spec_foldable",
+    "spec_frontLoaderTool",
+    "spec_toolHolder",
+    "spec_wheelLoaderShovel",
+    "spec_manureFork",
+    "spec_woodCrusher",
+}
+
+VehicleIntrospection._loaderSpecKeysByTypeName = VehicleIntrospection._loaderSpecKeysByTypeName or {}
+
+-- Bump when spec key resolution changes so stale cached arrays are not reused in-session.
+local LOADER_SPEC_KEY_LIST_CACHE_VER = 4
+
+---Giants maps specialization registration name -> vehicle field `spec_` + first char lower + rest.
+---@param regName string
+---@return string|nil
+local function specLuaFieldFromRegistrationName(regName)
+    if type(regName) ~= "string" or regName == "" then return nil end
+    return "spec_" .. regName:sub(1, 1):lower() .. regName:sub(2)
+end
+
+---Merged spec_* field names for one vehicle instance (cached per typeName).
+---@param obj table
+---@return table  array of string keys
+local function resolveSpecFieldNamesForVehicleType(obj)
+    local tn = "?"
+    pcall(function() tn = (obj and obj.typeName) and tostring(obj.typeName) or "?" end)
+    local cache = VehicleIntrospection._loaderSpecKeysByTypeName
+    local hit = cache[tn]
+    if type(hit) == "table" and hit.v == LOADER_SPEC_KEY_LIST_CACHE_VER and type(hit.keys) == "table" then
+        return hit.keys
+    end
+    -- Drop legacy cache shape (plain array from older builds).
+    if type(hit) == "table" and hit[1] ~= nil and type(hit[1]) == "string" and hit.keys == nil then
+        cache[tn] = nil
+    end
+
+    local seen = {}
+    local out = {}
+    local function addKey(nk)
+        if type(nk) ~= "string" or nk:sub(1, 5) ~= "spec_" then return end
+        if seen[nk] then return end
+        seen[nk] = true
+        table.insert(out, nk)
+    end
+
+    for _, nk in ipairs(LOADER_AXIS_SPEC_NAMES) do
+        addKey(nk)
+    end
+
+    local nFromType = 0
+    pcall(function()
+        local tm = g_vehicleTypeManager
+        if not tm then return end
+        local td = tm.types and tm.types[tn] or nil
+        if not td and type(tm.getVehicleTypeByName) == "function" then
+            td = tm:getVehicleTypeByName(tn)
+        end
+        if not td or type(td.specializationsByName) ~= "table" then return end
+        for regName in pairs(td.specializationsByName) do
+            local nk = specLuaFieldFromRegistrationName(regName)
+            if nk then
+                addKey(nk)
+                nFromType = nFromType + 1
+            end
+            if type(regName) == "string" then
+                local rl = regName:lower()
+                if rl:find("attachablefrontloader", 1, true) or (rl:find("attachable", 1, true) and rl:find("front", 1, true) and rl:find("loader", 1, true)) then
+                    addKey("spec_attachableFrontLoader")
+                    addKey("spec_attachableFrontloader")
+                    addKey("spec_attachablefrontloader")
+                end
+                if rl:find("dynamicmount", 1, true) or rl:find("dynamic_mount", 1, true) then
+                    addKey("spec_implementDynamicMountAttacher")
+                    addKey("spec_dynamicMountAttacher")
+                end
+            end
+        end
+    end)
+
+    cache[tn] = { v = LOADER_SPEC_KEY_LIST_CACHE_VER, keys = out }
+
+    return out
+end
+
 local function log(fmt, ...)
     if Logging and Logging.info then
         Logging.info("[MouseSteering][Introspect] " .. fmt, ...)
@@ -361,6 +467,226 @@ end
 function VehicleIntrospection:hasFrontloader(vehicle)
     local info = self:getAttachedImplementsInfo(vehicle)
     return #info.frontLoaders > 0
+end
+
+---Build a set [implementVehicle]=true for the frontloader arm and everything
+---attached to it (DFS over spec_attacherJoints). Uses (1) attacher joints on the
+---root whose joint type name contains "frontloader" and (2) a union with objects
+---from getAttachedImplementsInfo().frontLoaders so JD / odd XML still maps.
+---@param root table rootVehicle
+---@return table set keyed by implement/loader vehicle table -> true
+function VehicleIntrospection:getFrontloaderSubtreeObjectSet(root)
+    local set = {}
+    if not root then return set end
+
+    local jointNames = {}
+    pcall(function()
+        if AttacherJoints and type(AttacherJoints.jointTypeNameToInt) == "table" then
+            for name, int in pairs(AttacherJoints.jointTypeNameToInt) do
+                jointNames[int] = name
+            end
+        end
+    end)
+
+    local function visitFrom(v, depth)
+        pcall(function()
+            if not v or depth > 14 then return end
+            if set[v] then return end
+            set[v] = true
+            local aj = v.spec_attacherJoints
+            if aj and type(aj.attachedImplements) == "table" then
+                for _, impl in ipairs(aj.attachedImplements) do
+                    if impl and impl.object then
+                        visitFrom(impl.object, depth + 1)
+                    end
+                end
+            end
+        end)
+    end
+
+    local nJointFrontloader = 0
+    local ajRoot = root.spec_attacherJoints
+    if ajRoot and type(ajRoot.attachedImplements) == "table" and ajRoot.attacherJoints then
+        for _, impl in ipairs(ajRoot.attachedImplements) do
+            local jt = "?"
+            pcall(function()
+                local idx = impl.jointDescIndex
+                local descs = ajRoot.attacherJoints
+                if idx and descs and descs[idx] then
+                    jt = jointNames[descs[idx].jointType] or tostring(descs[idx].jointType)
+                end
+            end)
+            local jtl = (tostring(jt)):lower()
+            if jtl:find("frontloader") and impl.object then
+                nJointFrontloader = nJointFrontloader + 1
+                visitFrom(impl.object, 0)
+            end
+        end
+    end
+
+    local nHeuristicFL = 0
+    local ok, info = pcall(function() return self:getAttachedImplementsInfo(root) end)
+    if ok and info and type(info.frontLoaders) == "table" then
+        nHeuristicFL = #info.frontLoaders
+        for _, fl in ipairs(info.frontLoaders) do
+            if fl.object then
+                visitFrom(fl.object, 0)
+            end
+        end
+    end
+
+    return set
+end
+
+---While LMB mouse-steering the tractor, vanilla may still feed mouse axes into
+---frontloader / tool lastInputValues (fork up/down). Zero those axes each frame
+---only on vehicles in the FL hardware subtree — not on drivable/motor/etc.
+---@param root table rootVehicle
+---@param _phase string|nil caller tag (missionUpdate | vehiclePost | modDraw); reserved for API compatibility
+function VehicleIntrospection:zeroMouseHydraulicAxesOnFrontloaderHardware(root, _phase)
+    local set = self:getFrontloaderSubtreeObjectSet(root)
+    local setN = 0
+    for _ in pairs(set) do setN = setN + 1 end
+    if setN == 0 then
+        return
+    end
+
+    local EXCLUDE_SPECS = {
+        spec_drivable = true,
+        spec_motorized = true,
+        spec_enterable = true,
+        spec_attacherJoints = true,
+        spec_wheels = true,
+        spec_lights = true,
+        spec_light = true,
+        spec_licensePlates = true,
+        spec_aiVehicle = true,
+        spec_fillUnit = true,
+        spec_dischargeable = true,
+        spec_combine = true,
+        spec_cutter = true,
+        spec_plow = true,
+        spec_cultivator = true,
+        spec_sowingMachine = true,
+        spec_sprayer = true,
+        spec_baler = true,
+        spec_dashboard = true,
+        spec_display = true,
+    }
+
+    ---Giants vehicle specs may be Lua tables or userdata with a __index metatable.
+    local function isSpecInstance(spec)
+        return spec ~= nil and (type(spec) == "table" or type(spec) == "userdata")
+    end
+
+    ---Root-only: match FL / cylinder / fork-style specs (Giants naming varies by brand).
+    local function rootSpecMatchesLoaderHydraulics(nk)
+        local hint = (nk or ""):lower()
+        return hint:find("frontloader") or hint:find("front_loader") or hint:find("frontload")
+            or hint:find("cylinder") or hint:find("movingtool") or hint:find("moving_tool")
+            or hint:find("shovel") or hint:find("grab") or hint:find("balegrab")
+            or hint:find("loaderconsole") or hint:find("stapler") or hint:find("palletfork")
+            or hint:find("pallet") or hint:find("fork")
+    end
+
+    ---Visit specs that may carry loader hydraulic axes (never use pairs(obj) for spec_*).
+    local function forLoaderHydraulicSpecs(obj, visitFn)
+        local keys = resolveSpecFieldNamesForVehicleType(obj)
+        for _, nk in ipairs(keys) do
+            if not EXCLUDE_SPECS[nk] then
+                local spec = nil
+                pcall(function() spec = obj[nk] end)
+                if isSpecInstance(spec) then
+                    if obj == root then
+                        if rootSpecMatchesLoaderHydraulics(nk) then
+                            visitFn(nk, spec)
+                        end
+                    else
+                        visitFn(nk, spec)
+                    end
+                end
+            end
+        end
+    end
+
+    ---Match any lastInputValues key that plausibly carries an analog axis (Giants naming varies).
+    local function isAxisLikeKey(k)
+        if type(k) ~= "string" then return false end
+        return k:lower():find("axis", 1, true) ~= nil
+    end
+
+    local function zeroAxisLastInputs(spec)
+        if not spec or type(spec.lastInputValues) ~= "table" then return end
+        local liv = spec.lastInputValues
+        for k, val in pairs(liv) do
+            if isAxisLikeKey(k) and type(val) == "number" then
+                liv[k] = 0
+            end
+        end
+    end
+
+    ---Visit root once, then subtree objects (root is usually not in `set`).
+    local function forEachLoaderObject(fn)
+        local seen = {}
+        local function once(obj)
+            if not obj or seen[obj] then return end
+            seen[obj] = true
+            pcall(function() fn(obj) end)
+        end
+        once(root)
+        for obj in pairs(set) do
+            once(obj)
+        end
+    end
+
+    forEachLoaderObject(function(obj)
+        forLoaderHydraulicSpecs(obj, function(_, spec)
+            zeroAxisLastInputs(spec)
+        end)
+    end)
+end
+
+---True when the player's current implement selection is the frontloader arm or
+---any tool attached to that arm (subtree of spec_attacherJoints on the FL vehicle).
+---When the root vehicle or a rear hitch trailer (etc.) is selected, returns false
+---so mouse steering can stay active.
+---@param vehicle table controlled vehicle (tractor); uses rootVehicle for selection.
+---@return boolean
+function VehicleIntrospection:isFrontloaderBranchSelected(vehicle)
+    if not vehicle then return false end
+    local root = vehicle.rootVehicle or vehicle
+    if not root then return false end
+
+    local set = self:getFrontloaderSubtreeObjectSet(root)
+    if not next(set) then
+        return false
+    end
+
+    local function inSet(v)
+        return v ~= nil and v ~= root and set[v] == true
+    end
+
+    local selVeh = nil
+    pcall(function()
+        if type(root.getSelectedVehicle) == "function" then
+            selVeh = root:getSelectedVehicle()
+        end
+    end)
+    if inSet(selVeh) then
+        return true
+    end
+
+    local impl = nil
+    pcall(function()
+        if type(root.getSelectedImplement) == "function" then
+            impl = root:getSelectedImplement()
+        end
+    end)
+    if impl and impl.object and inSet(impl.object) then
+        return true
+    end
+
+    return false
 end
 
 ---Return trailer kinematics parameters for the FIRST attached trailer, or nil

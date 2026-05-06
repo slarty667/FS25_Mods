@@ -176,8 +176,9 @@ local function shouldRender(vehicle, axisSteer)
     if mode == MODE_OFF then return false end
 
     if mode == MODE_MOUSE then
-        -- Only while the player is actively mouse-steering.
-        if not MouseSteering or not MouseSteering.armed or not MouseSteering.active then
+        -- Only while mouse steering is driving axisSteer (LMB or release coast).
+        if not MouseSteering or not MouseSteering.armed
+            or not (MouseSteering.active or MouseSteering._steeringCoast) then
             return false
         end
     elseif mode == MODE_STEERING then

@@ -7,8 +7,8 @@
 		<de>Mauslenkung (Mittelklick)</de>
 	</title>
 	<description>
-		<en>Realistic mouse steering for keyboard+mouse: armed automatically when you enter a vehicle (Ctrl+M or middle-click to turn off). Hold LMB to steer with relative mouse movement. Steering returns smoothly to center when LMB is released. Includes a projected driving path on the ground (like a reversing camera) that curves with your steering input. All options configurable via Settings -> General.</en>
-		<de>Realistische Mauslenkung für Tastatur+Maus: beim Einsteigen automatisch scharf (Strg+M oder Mittelklick zum Abschalten). LMB gedrückt halten zum Lenken mit relativer Mausbewegung. Lenkung läuft weich in die Mitte zurück beim Loslassen. Projiziert zusätzlich eine Fahrspur auf den Boden (wie eine Rückfahrkamera), die sich mit dem Lenkeinschlag mitbiegt. Alle Optionen in den Spiel-Einstellungen -> Allgemein konfigurierbar.</de>
+		<en>Realistic mouse steering for keyboard+mouse: armed automatically when you enter a vehicle (Ctrl+M or middle-click toggles armed off/on). Hold LMB to steer; offset from screen centre sets steer rate; after LMB release steering eases toward centre using the game steering-return speed when available. Optional cabin camera yaw follows steering (look into the corner). With a frontloader, mouse steering stays armed unless you select the loader arm or a tool on that arm—then input pauses for vanilla loader mouse; select tractor or trailer again to steer. Includes a projected driving path on the ground (reversing-camera style) plus optional trailer swing line when reversing. All options under Settings → General.</en>
+		<de>Realistische Mauslenkung für Tastatur+Maus: beim Einsteigen automatisch scharf (Strg+M oder Mittelklick schaltet scharf/aus). LMB halten zum Lenken; Abstand vom Bildschirmzentrum bestimmt die Lenkrate; nach Loslassen der LMB läuft die Lenkung weich zur Mitte zurück (Lenkrückstellung aus den Spieloptionen, wenn verfügbar). Optional dreht die Innenkamera mit (Kurvenblick). Mit Frontlader bleibt die Mauslenkung scharf, außer du wählst den Lader oder ein Werkzeug am Lader — dann pausiert die Mod-Maus für die Vanilla-Ladersteuerung; Zugmaschine oder Anhänger wählen und Mauslenkung greift wieder. Fahrspur-Projektion am Boden (Rückfahrkamera-Stil), optional gelber Anhänger-Pfad rückwärts. Alle Optionen unter Einstellungen → Allgemein.</de>
 	</description>
 	<l10n filenamePrefix="l10n/l10n">
 		<!-- Input actions -->
@@ -73,16 +73,16 @@
 			<de>Lenkbalken-Anzeige</de>
 		</text>
 		<text name="ms_hudBarEnabled_long">
-			<en>Top-of-screen bar showing the current steering angle. Visible only while actively steering.</en>
-			<de>Oberer Bildschirmrand: grüner Balken zeigt den aktuellen Lenkeinschlag. Nur sichtbar beim aktiven Lenken.</de>
+			<en>Top-of-screen bar showing the current steering angle while LMB steering or during the short return-to-centre after you release LMB.</en>
+			<de>Oberer Bildschirmrand: Balken zeigt den Lenkeinschlag während LMB-Lenkung und kurz danach beim Zurücklaufen zur Mitte.</de>
 		</text>
 		<text name="ms_pathIndicatorMode_short">
 			<en>Driving path projection</en>
 			<de>Fahrspur-Projektion</de>
 		</text>
 		<text name="ms_pathIndicatorMode_long">
-			<en>When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = only during active mouse steering, Always = while in any vehicle.</en>
-			<de>Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = nur bei aktiver Mauslenkung, Immer = solange im Fahrzeug.</de>
+			<en>When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = during LMB mouse steering and the short coast after release, Always = while in any vehicle.</en>
+			<de>Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = bei LMB-Mauslenkung und kurzer Rücklaufphase danach, Immer = solange im Fahrzeug.</de>
 		</text>
 		<!-- Values for the pathIndicatorMode choice control (order must match Settings.lua) -->
 		<text name="ms_pathMode_off">
@@ -110,6 +110,56 @@
 		<text name="ms_trailerPathEnabled_long">
 			<en>When reversing with a trailer attached, project a yellow line showing where the trailer's rear edges will swing. Uses the trailer's current hitch angle and the vehicle steering arc — updates live.</en>
 			<de>Beim Rückwärtsfahren mit Anhänger wird eine gelbe Linie projiziert, die zeigt, wohin die Anhänger-Hinterkante ausschwenkt. Basiert auf dem aktuellen Knickwinkel und dem Zugfahrzeug-Lenkbogen — aktualisiert live.</de>
+		</text>
+
+		<text name="ms_steeringHeadTurnEnabled_short">
+			<en>Look into corner (camera)</en>
+			<de>Kurvenblick (Kamera)</de>
+		</text>
+		<text name="ms_steeringHeadTurnEnabled_long">
+			<en>While holding LMB to steer, yaw the cabin camera slightly with steering so the view follows the bend. Mouse look stays suppressed for LMB-only steering; use RMB+LMB for free-look.</en>
+			<de>Beim Lenken mit gedrückter LMB dreht die Innenkamera leicht mit dem Lenkeinschlag mit. Maus-Umblick bleibt bei reiner LMB gesperrt; RMB+LMB = freier Umblick.</de>
+		</text>
+		<text name="ms_steeringHeadTurnMaxDeg_short">
+			<en>Corner look — max angle</en>
+			<de>Kurvenblick — max. Winkel</de>
+		</text>
+		<text name="ms_steeringHeadTurnMaxDeg_long">
+			<en>Extra camera yaw at full steering (degrees each side). A natural in-the-bend glance is often ~25–40°. For cross-traffic / shoulder-check visibility, try ~70–100°; ~90° is a strong sideways view.</en>
+			<de>Zusätzliche Kameradrehung bei vollem Lenkeinschlag (Grad pro Seite). Ein natürlicher Kurvenblick liegt oft bei ~25–40°. Für Querverkehrs- bzw. Schulterblick eher ~70–100°; ~90° ist ein kräftiger Seitblick.</de>
+		</text>
+		<text name="ms_steeringHeadTurnResponse_short">
+			<en>Corner look — response</en>
+			<de>Kurvenblick — Ansprechverhalten</de>
+		</text>
+		<text name="ms_steeringHeadTurnResponse_long">
+			<en>How quickly the camera follows steering and returns when you release. Higher = snappier.</en>
+			<de>Wie schnell die Kamera dem Lenken folgt und beim Loslassen zurückfedert. Höher = direkter.</de>
+		</text>
+		<text name="ms_steeringHeadTurnInvert_short">
+			<en>Invert corner look</en>
+			<de>Kurvenblick invertieren</de>
+		</text>
+		<text name="ms_steeringHeadTurnInvert_long">
+			<en>Flip left/right if the camera turns the wrong way for your vehicle or camera mod.</en>
+			<de>Links/rechts tauschen, falls die Kamera bei deinem Fahrzeug oder Kamera-Mod falsch herum dreht.</de>
+		</text>
+
+		<text name="ms_steeringReleaseUseGameSetting_short">
+			<en>Use game steering return</en>
+			<de>Lenkrückstellung aus Spiel</de>
+		</text>
+		<text name="ms_steeringReleaseUseGameSetting_long">
+			<en>After releasing LMB, try to read the same steering return speed as in Options (when the game exposes it). If off, only the fallback percent below is used.</en>
+			<de>Nach Loslassen der LMB dieselbe Lenkrückstell-Geschwindigkeit wie in den Spieloptionen verwenden (wenn die Engine den Wert liefert). Aus = nur der Prozentwert unten.</de>
+		</text>
+		<text name="ms_steeringReleasePercent_short">
+			<en>Steering return (fallback %)</en>
+			<de>Lenkrückstellung (Fallback %)</de>
+		</text>
+		<text name="ms_steeringReleasePercent_long">
+			<en>How fast mouse steering eases back to centre after LMB release. Higher = faster. Used when game read is disabled or unavailable. Tuned to feel close to keyboard return.</en>
+			<de>Wie schnell die Mauslenkung nach LMB-Loslassen zur Mitte zurückläuft. Höher = schneller. Wenn die Spieloption nicht ausgelesen werden kann. Skalierung ähnlich Tastatur-Rückstellung.</de>
 		</text>
 	</l10n>
 	<extraSourceFiles>

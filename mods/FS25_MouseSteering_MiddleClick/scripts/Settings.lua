@@ -28,6 +28,14 @@ local DEFAULTS = {
     hudBarEnabled      = true,   -- show the top-of-screen steering bar
     pathIndicatorMode  = 2,      -- path projection visibility: 1=off, 2=on steering, 3=only mouse, 4=always
     trailerPathEnabled = true,   -- show a second (yellow) path for the trailer rear axle when reversing
+    -- Steering-linked camera yaw (look into the corner) while LMB steering
+    steeringHeadTurnEnabled   = true,
+    steeringHeadTurnMaxDeg    = 85,   -- max extra yaw at full steer (each side); ~90 suits hard shoulder-check
+    steeringHeadTurnResponse  = 14,   -- higher = snappier follow (decay uses same scale)
+    steeringHeadTurnInvert    = false, -- flip direction if it feels wrong for a vehicle
+    -- Smooth return of mouse steering after LMB release (matches keyboard feel)
+    steeringReleaseUseGameSetting = true, -- read game steering return % when available
+    steeringReleasePercent       = 80,   -- fallback / manual % (higher = faster recentre)
     -- NOTE: the old servoSpeedHigh/servoFactorLow settings were removed.
     -- Servo damping now scales against the vehicle's own top speed (see MouseSteering:update).
 }
@@ -61,6 +69,12 @@ MouseSteeringSettings.controlProperties = {
       values = { "ms_pathMode_off", "ms_pathMode_steering", "ms_pathMode_mouse", "ms_pathMode_always" },
       autoBind = true },
     { name = "trailerPathEnabled", autoBind = true },
+    { name = "steeringHeadTurnEnabled", autoBind = true },
+    { name = "steeringHeadTurnMaxDeg",   min = 10, max = 110, step = 1,  autoBind = true },
+    { name = "steeringHeadTurnResponse", min = 4,  max = 35, step = 1,   autoBind = true },
+    { name = "steeringHeadTurnInvert",   autoBind = true },
+    { name = "steeringReleaseUseGameSetting", autoBind = true },
+    { name = "steeringReleasePercent", min = 5, max = 200, step = 1, autoBind = true },
 }
 
 ---------------------------------------------------------------------------

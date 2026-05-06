@@ -3,6 +3,8 @@
   FS25_MouseSteering_MiddleClick: realistic mouse steering for keyboard+mouse.
   Armed by default when entering a vehicle; Ctrl+M or middle-click toggles armed off/on.
   Hold LMB to steer with mouse movement. Steering returns smoothly to center when LMB is released.
+  With a frontloader: stays armed; mouse handling pauses only while the loader arm or a tool
+  on that arm is selected (see VehicleIntrospection:isFrontloaderBranchSelected).
   
   Key difference from original FS25_mouseSteering:
   - LMB is mandatory for steering (original: always on when activated).
@@ -12,6 +14,10 @@
     cursor away from center → steer; cursor at center → hold.
   - Steering is written directly to spec_drivable.lastInputValues.axisSteer
     (like the original mod) to prevent the game from overwriting the value.
+  - Optional steering-linked camera yaw (look into the corner) while LMB steering;
+    applied after VehicleCamera:update (see afterVehicleCameraUpdate).
+  - After LMB release, steering (and head-turn) decay smoothly toward centre,
+    scaled by the game's steering return / mod fallback (see getSteeringReleasePercent).
 ]]
 
 MouseSteering = {}
@@ -26,6 +32,8 @@ MouseSteering.lmbDown = false
 MouseSteering.drawVehicle = nil
 MouseSteering.lastActiveVehicle = nil
 MouseSteering._lastControlVehicle = nil
+MouseSteering._steeringCoast = false
+MouseSteering._syncTakeoverFramesLeft = 0
 
 local function log(fmt, ...)
     if Logging and Logging.info then
@@ -35,6 +43,81 @@ end
 
 local function getConfig()
     return MouseSteeringSettings or {}
+end
+
+--- Steering return speed percent (higher = faster recentre after LMB release).
+--- Tries GameSettings first (names vary by patch); falls back to mod setting.
+local function getSteeringReleasePercent()
+    local cfg = getConfig()
+    if cfg.steeringReleaseUseGameSetting ~= false
+        and g_gameSettings and GameSettings and GameSettings.SETTING then
+        local names = {
+            "STEERING_BACK_SPEED",
+            "INPUT_STEERING_BACK_SPEED",
+            "STEERING_RETURN_SPEED",
+            "STEERING_INPUT_RETURN_SPEED",
+            "STEERING_INPUT_HELP_SPEED",
+        }
+        for _, n in ipairs(names) do
+            local id = GameSettings.SETTING[n]
+            if id ~= nil then
+                local ok, v = pcall(function() return g_gameSettings:getValue(id) end)
+                if ok and type(v) == "number" and v == v then
+                    local p = v
+                    if p <= 2 and p >= 0 then
+                        p = p * 100
+                    end
+                    return math.max(5, math.min(200, p))
+                end
+            end
+        end
+    end
+    local p = cfg.steeringReleasePercent or 80
+    return math.max(5, math.min(200, p))
+end
+
+--- Normalised steering [-1,1] for LMB takeover: pick strongest plausible signal
+--- (physical wheel, Drivable axisSide, last axisSteer). Matches path-indicator logic.
+local function readSteeringTakeoverNormalized(vehicle)
+    if not vehicle then return 0 end
+    local rt, ax, ins = nil, nil, nil
+    pcall(function()
+        if type(vehicle.rotatedTime) == "number"
+            and type(vehicle.rotatedTimeMax) == "number"
+            and vehicle.rotatedTimeMax > 0 then
+            rt = vehicle.rotatedTime / vehicle.rotatedTimeMax
+        end
+    end)
+    pcall(function()
+        local d = vehicle.spec_drivable
+        if d and type(d.axisSide) == "number" then
+            ax = d.axisSide
+        end
+    end)
+    pcall(function()
+        local d = vehicle.spec_drivable
+        if d and d.lastInputValues and type(d.lastInputValues.axisSteer) == "number" then
+            ins = d.lastInputValues.axisSteer
+        end
+    end)
+    local function clamp1(x)
+        if x == nil or x ~= x then return nil end
+        if x > 1 then return 1 end
+        if x < -1 then return -1 end
+        return x
+    end
+    rt, ax, ins = clamp1(rt), clamp1(ax), clamp1(ins)
+    local best = 0
+    local function consider(c)
+        if c == nil or c ~= c then return end
+        if math.abs(c) > math.abs(best) then
+            best = c
+        end
+    end
+    consider(rt)
+    consider(ax)
+    consider(ins)
+    return best
 end
 
 ---------------------------------------------------------------------------
@@ -54,6 +137,35 @@ function MouseSteering:isSteeringAllowed(vehicle)
         if ok and not running then return false end
     end
     return true
+end
+
+---While the frontloader arm or a tool on that arm is the selected implement,
+---vanilla uses the mouse for the loader — we must not consume mouse movement.
+---@param vehicle table|nil
+---@return boolean
+function MouseSteering:isFrontloaderSelectionSuppressingMouse(vehicle)
+    if not vehicle then return false end
+    if not VehicleIntrospection or not VehicleIntrospection.isFrontloaderBranchSelected then
+        return false
+    end
+    local ok, v = pcall(function()
+        return VehicleIntrospection:isFrontloaderBranchSelected(vehicle)
+    end)
+    return ok and v == true
+end
+
+---Zero frontloader hydraulic lastInputValues while LMB mouse-steering (cab focus).
+---@param vehicle table|nil controlled vehicle (tractor)
+---@param phase string|nil debug tag: missionUpdate | vehiclePost | modDraw
+function MouseSteering:tryZeroFrontloaderHydraulics(vehicle, phase)
+    if not self.armed or not self.active then return end
+    if not vehicle then return end
+    if self:isFrontloaderSelectionSuppressingMouse(vehicle) then return end
+    if VehicleIntrospection and VehicleIntrospection.zeroMouseHydraulicAxesOnFrontloaderHardware then
+        pcall(function()
+            VehicleIntrospection:zeroMouseHydraulicAxesOnFrontloaderHardware(vehicle.rootVehicle or vehicle, phase)
+        end)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -84,8 +196,11 @@ function MouseSteering:onToggleArmed(vehicle)
     end
     self.armed = wantArmed
     if not self.armed then
+        self:clearSteeringHeadTurn()
         self.active = false
         self.lmbDown = false
+        self._steeringCoast = false
+        self._syncTakeoverFramesLeft = 0
         self.steeringValue = 0
         self._mouseSteerRate = nil
         self.drawVehicle = nil
@@ -103,30 +218,21 @@ function MouseSteering:armByDefault(vehicle)
     self.lastActiveVehicle = vehicle
     self.active = false
     self.lmbDown = false
+    self._steeringCoast = false
+    self._syncTakeoverFramesLeft = 0
     self.steeringValue = 0
     self._mouseSteerRate = nil
     self.drawVehicle = vehicle
 
-    -- Auto-disarm when a frontloader is attached: mouse steering and
-    -- frontloader-arm control would both grab the mouse, which makes
-    -- pallet work miserable. User can still flip MS on manually with
-    -- Ctrl+M / middle-click if they really want.
-    local hasFL = false
-    if VehicleIntrospection and VehicleIntrospection.hasFrontloader then
-        local ok, v = pcall(function() return VehicleIntrospection:hasFrontloader(vehicle) end)
-        if ok then hasFL = v end
-    end
-    if hasFL then
-        self.armed = false
-        log("Armed OFF (default on enter — frontloader detected, MS suppressed; toggle with Ctrl+M)")
-    else
-        self.armed = true
-        log("Armed ON (default on enter)")
-    end
+    -- Frontloader: mouse steering stays armed by default; input is suppressed only
+    -- while the loader arm or a tool on that arm is selected (see isFrontloaderSelectionSuppressingMouse).
+    self.armed = true
+    log("Armed ON (default on enter; frontloader mouse share only when FL/tool selected)")
 end
 
 function MouseSteering:onControlledVehicleChanged(vehicle)
     if vehicle == self._lastControlVehicle then return end
+    self:clearSteeringHeadTurn()
     self._lastControlVehicle = vehicle
     if vehicle then
         self:armByDefault(vehicle)
@@ -136,6 +242,8 @@ function MouseSteering:onControlledVehicleChanged(vehicle)
         self.armed = false
         self.active = false
         self.lmbDown = false
+        self._steeringCoast = false
+        self._syncTakeoverFramesLeft = 0
         self.steeringValue = 0
         self._mouseSteerRate = nil
         self.drawVehicle = nil
@@ -160,8 +268,7 @@ end
 -- are all wired through the MOUSESTEERING_TOGGLE_ARMED action event bound in
 -- MouseSteeringVehicle.lua. The previous keyEvent + update() polling + mouseEvent
 -- MMB path combined with the action event caused 2-3 simultaneous triggers per
--- press, which cancelled each other out (on vehicles with frontloader, where
--- armed started =false, the cancel-out kept it stuck off).
+-- press, which cancelled each other out.
 ---------------------------------------------------------------------------
 function MouseSteering:keyEvent(unicode, sym, modifier, isDown)
     -- intentionally empty; kept for API symmetry.
@@ -174,6 +281,8 @@ end
 ---------------------------------------------------------------------------
 function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
     if not self.armed then return end
+    local vehicle = self:getControlledVehicle()
+    if self:isFrontloaderSelectionSuppressingMouse(vehicle) then return end
 
     -- Extra (non-LMB) button tracking. Design goal: LMB keeps steering (wheel
     -- stays at its current angle), LMB+RMB additionally enables free-look
@@ -203,6 +312,10 @@ function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
         if isDown and not self.lmbDown then
             self.lmbDown = true
             self.active = true
+            self._steeringCoast = false
+            -- Keep head-turn smoothing continuous with what is already on the camera
+            -- (avoids a jump when grabbing LMB during coast / return).
+            self._headTurnSmoothed = self._headTurnOffsetRad or self._headTurnSmoothed or 0
             self._mouseSteerRate = 0
             -- Wait for the cursor to come near 0.5 before accepting steering
             -- input. This protects against starting a session with the cursor
@@ -210,7 +323,13 @@ function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
             -- toggled mouse mode with RMB and then re-grips LMB.
             self._awaitingRecenter = true
             self._otherMouseButtonDown = false
-            log("Active ON (LMB down)")
+
+            -- Hand-over: grab the wheel at the current angle (keyboard coast,
+            -- mid-turn, etc.). readSteeringTakeoverNormalized matches path-indicator
+            -- sources; update() runs one sync same/next tick if vehicle was not ready.
+            self._syncTakeoverFramesLeft = 2
+            self.steeringValue = readSteeringTakeoverNormalized(vehicle)
+            log("Active ON (LMB down, takeover steer=%+.3f)", self.steeringValue or 0)
         end
         if isUp and self.lmbDown then
             self.lmbDown = false
@@ -218,7 +337,14 @@ function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
             self._mouseSteerRate = nil
             self._awaitingRecenter = false
             self._otherMouseButtonDown = false
-            log("Active OFF (LMB up)")
+            local dz = (MouseSteeringSettings and MouseSteeringSettings.deadzone) or 0.02
+            if math.abs(self.steeringValue or 0) > dz then
+                self._steeringCoast = true
+            else
+                self._steeringCoast = false
+                self.steeringValue = 0
+            end
+            log("Active OFF (LMB up, coast=%s)", tostring(self._steeringCoast))
         end
     end
 
@@ -265,10 +391,112 @@ function MouseSteering:ensureCameraExtensionInstalled()
 end
 
 ---------------------------------------------------------------------------
--- update: accumulate steering while active, let game physics handle centering
+-- Steering-linked camera yaw (after VehicleCamera:update; see VehicleCameraExtension)
+---------------------------------------------------------------------------
+function MouseSteering:clearSteeringHeadTurn()
+    local cam = self._headTurnCameraRef
+    local off = self._headTurnOffsetRad or 0
+    if cam and off ~= 0 then
+        pcall(function()
+            if cam.rotY ~= nil then
+                cam.rotY = cam.rotY - off
+            end
+        end)
+    end
+    self._headTurnOffsetRad = 0
+    self._headTurnSmoothed = 0
+    self._headTurnCameraRef = nil
+end
+
+function MouseSteering:afterVehicleCameraUpdate(camera, dt)
+    if not camera or not camera.vehicle then return end
+    local vehicle = camera.vehicle
+    local spec = vehicle.spec_enterable
+    if not spec or camera ~= spec.activeCamera then return end
+    if camera.isRotatable == false then return end
+
+    local cfg = getConfig()
+    local enabled = cfg.steeringHeadTurnEnabled ~= false
+    local prev = self._headTurnOffsetRad or 0
+
+    local should = enabled
+        and self.armed
+        and (self.active or self._steeringCoast)
+        and not self._otherMouseButtonDown
+        and self:isSteeringAllowed(vehicle)
+        and not self:isFrontloaderSelectionSuppressingMouse(vehicle)
+
+    local dti = dt or g_currentDt or 16
+    local target = 0
+    if should then
+        local sv = self.steeringValue or 0
+        local deadzone = cfg.deadzone or 0.02
+        if math.abs(sv) < deadzone then sv = 0 end
+        local maxDeg = cfg.steeringHeadTurnMaxDeg or 85
+        if maxDeg < 0.5 then maxDeg = 0.5 end
+        if maxDeg > 110 then maxDeg = 110 end
+        local maxRad = math.rad(maxDeg)
+        local sign = cfg.steeringHeadTurnInvert and 1 or -1
+        -- Reverse travel: steering axis is still "left wheel" but the cabin faces
+        -- the rear — flip head-turn so "steer left" looks left along the path of travel.
+        local reverseMul = 1
+        if VehicleIntrospection and VehicleIntrospection.getMotion then
+            local ok, _, isRev = pcall(function()
+                return VehicleIntrospection:getMotion(vehicle)
+            end)
+            if ok and isRev then
+                reverseMul = -1
+            end
+        end
+        target = sign * sv * maxRad * reverseMul
+        local response = cfg.steeringHeadTurnResponse or 14
+        local alpha = 1 - math.exp(-dti * 0.001 * response)
+        if alpha > 1 then alpha = 1 elseif alpha < 0 then alpha = 0 end
+        local sm = self._headTurnSmoothed or 0
+        self._headTurnSmoothed = sm + (target - sm) * alpha
+    else
+        local response = cfg.steeringHeadTurnResponse or 14
+        local alpha = 1 - math.exp(-dti * 0.001 * response * 0.65)
+        if alpha > 1 then alpha = 1 elseif alpha < 0 then alpha = 0 end
+        local sm = self._headTurnSmoothed or 0
+        self._headTurnSmoothed = sm * (1 - alpha)
+        if math.abs(self._headTurnSmoothed) < 0.0001 then self._headTurnSmoothed = 0 end
+    end
+
+    local new = self._headTurnSmoothed or 0
+    local useAnchoredCoast = self._steeringCoast and not self.active and should
+
+    pcall(function()
+        if useAnchoredCoast then
+            -- During coast: steer the cabin view back toward the interior default
+            -- (origRotY) while the steering-linked offset decays — same "null" as on enter.
+            local origY = camera.origRotY
+            if origY ~= nil then
+                local desired = origY + new
+                local vk = (cfg.steeringHeadTurnResponse or 14) * 0.55
+                local k = 1 - math.exp(-dti * 0.001 * vk)
+                if k > 1 then k = 1 elseif k < 0 then k = 0 end
+                camera.rotY = camera.rotY + (desired - camera.rotY) * k
+            else
+                camera.rotY = camera.rotY - prev + new
+            end
+        else
+            -- LMB steering: incremental head-turn overlay (unchanged).
+            camera.rotY = camera.rotY - prev + new
+        end
+    end)
+    self._headTurnOffsetRad = new
+    self._headTurnCameraRef = camera
+end
+
+---------------------------------------------------------------------------
+-- update: accumulate while LMB active; smooth decay ("coast") after release
 ---------------------------------------------------------------------------
 function MouseSteering:update(dt)
     self:ensureCameraExtensionInstalled()
+    if VehicleCameraExtension and VehicleCameraExtension.deferredLoaderLookWrapScan then
+        VehicleCameraExtension:deferredLoaderLookWrapScan()
+    end
 
     -- Inject our settings group into the General Settings page.
     -- injectMenu() is idempotent (sets _menuInjected) and safe to retry until the UI is ready.
@@ -283,14 +511,23 @@ function MouseSteering:update(dt)
         RmbSuppression:install()
     end
 
+    if VehicleCameraExtension and VehicleCameraExtension.tickLateGlobalSpecHooks then
+        pcall(function()
+            VehicleCameraExtension:tickLateGlobalSpecHooks(dt)
+        end)
+    end
+
     local vehicle = self:getControlledVehicle()
     if not vehicle then
         if self.armed then
             self.armed = false
             self.active = false
             self.lmbDown = false
+            self._steeringCoast = false
+            self._syncTakeoverFramesLeft = 0
             self.steeringValue = 0
         end
+        self:clearSteeringHeadTurn()
         self._lastControlVehicle = nil
         return
     end
@@ -301,16 +538,52 @@ function MouseSteering:update(dt)
 
     if not self.armed then return end
 
+    -- Frontloader / fork selected: release our grab so vanilla loader mouse works.
+    if self:isFrontloaderSelectionSuppressingMouse(vehicle) then
+        self.active = false
+        self.lmbDown = false
+        self._steeringCoast = false
+        self._syncTakeoverFramesLeft = 0
+        self.steeringValue = 0
+        self._mouseSteerRate = nil
+        self._otherMouseButtonDown = false
+        self._awaitingRecenter = false
+        if SteeringPathIndicator and SteeringPathIndicator.update then
+            SteeringPathIndicator:update(dt, vehicle)
+        end
+        return
+    end
+
     -- Menu? force inactive
     if g_inGameMenu and g_inGameMenu.isOpen then
         self.active = false
         self.lmbDown = false
+        self._steeringCoast = false
+        self._syncTakeoverFramesLeft = 0
+        self.steeringValue = 0
     end
 
-    if not self:isSteeringAllowed(vehicle) then return end
+    if not self:isSteeringAllowed(vehicle) then
+        self._steeringCoast = false
+        self._syncTakeoverFramesLeft = 0
+        if not self.active then
+            self.steeringValue = 0
+        end
+        if SteeringPathIndicator and SteeringPathIndicator.update then
+            SteeringPathIndicator:update(dt, vehicle)
+        end
+        return
+    end
 
     local cfg = getConfig()
     local deadzone = cfg.deadzone or 0.02
+
+    -- Re-sample takeover once at the start of steering (after physics/input),
+    -- so LMB "hand on wheel" matches the real wheel even when mouseEvent ran early.
+    if self.active and (self._syncTakeoverFramesLeft or 0) > 0 then
+        self.steeringValue = readSteeringTakeoverNormalized(vehicle)
+        self._syncTakeoverFramesLeft = self._syncTakeoverFramesLeft - 1
+    end
 
     -----------------------------------------------------------------
     -- Consume mouse steering rate (displacement from center = steering rate)
@@ -342,13 +615,25 @@ function MouseSteering:update(dt)
     end
 
     -----------------------------------------------------------------
-    -- Apply steering: only while LMB is held (active).
-    -- When LMB is released, we stop writing to axisSteer entirely.
-    -- The game's vehicle physics (caster/self-centering) will return
-    -- the wheels to center naturally, speed-dependent — just like
-    -- releasing A/D keys. No artificial software centering needed.
+    -- Apply steering: while LMB held, or while "coasting" decay after release.
+    -- Coast speed follows getSteeringReleasePercent() (game option when found).
     -----------------------------------------------------------------
-    if self.active then
+    if self.active or self._steeringCoast then
+        if self._steeringCoast and not self.active then
+            -- Time constant ~ keyboard return: old 520*100/p was far too slow.
+            -- Higher in-game % => smaller tau => faster decay.
+            local p = math.max(12, getSteeringReleasePercent())
+            local baseTau = 24
+            local tauMs = baseTau * (100 / p)
+            local dti = dt or g_currentDt or 16
+            if tauMs < 5 then tauMs = 5 elseif tauMs > 320 then tauMs = 320 end
+            self.steeringValue = (self.steeringValue or 0) * math.exp(-dti / tauMs)
+            if math.abs(self.steeringValue) < math.max(deadzone * 0.5, 0.003) then
+                self.steeringValue = 0
+                self._steeringCoast = false
+            end
+        end
+
         local out = self.steeringValue
         if math.abs(out) < deadzone then out = 0 end
 
@@ -363,10 +648,16 @@ function MouseSteering:update(dt)
                 end
             end
         end
+
+        -- Frontloader fork / arm hydraulics still read mouse while the cab is selected;
+        -- clear their axis* lastInputValues after we wrote steering (mission update order).
+        if self.active then
+            self:tryZeroFrontloaderHydraulics(vehicle, "missionUpdate")
+        end
     else
-        -- LMB released: reset our internal value for the next steering session.
-        -- The game physics handles the actual wheel centering.
         self.steeringValue = 0
+        self._steeringCoast = false
+        self._syncTakeoverFramesLeft = 0
     end
 
     -- Projected driving path: the indicator gates itself internally
@@ -403,7 +694,8 @@ end
 ---------------------------------------------------------------------------
 function MouseSteering:drawForVehicle(vehicle)
     if not vehicle or not g_currentMission then return end
-    if not self.armed or not self.active then return end
+    if not self.armed or not (self.active or self._steeringCoast) then return end
+    if self:isFrontloaderSelectionSuppressingMouse(vehicle) then return end
 
     -- Gate: hudBarEnabled flag from settings (default true)
     local cfgGate = getConfig()

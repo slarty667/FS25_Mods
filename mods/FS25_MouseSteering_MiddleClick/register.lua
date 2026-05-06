@@ -50,8 +50,16 @@ function MouseSteeringRegister.registerToVehicleTypes()
     if Logging then Logging.info("[MouseSteering] registered spec to %d vehicle types", count) end
 end
 
-function MouseSteeringValidateVehicleTypes(TypeManager)
+--- Runs before vanilla TypeManager.validateTypes (vehicle types must be patched early).
+function MouseSteeringValidateVehicleTypesPre(TypeManager)
     MouseSteeringRegister.registerToVehicleTypes()
+end
+
+--- Runs after vanilla validateTypes — specialization lookups may be incomplete if we run too early.
+function MouseSteeringValidateVehicleTypesPost(TypeManager)
+    if VehicleCameraExtension and VehicleCameraExtension.applySpecializationLookHooksAtValidateTypes then
+        VehicleCameraExtension:applySpecializationLookHooksAtValidateTypes()
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -73,6 +81,11 @@ local function createModInstance(mission)
         end
     end
     function modInstance:draw(dt)
+        -- Late pass: vehicle/implement input may be applied after mission:update / vehicle onPostUpdate.
+        local v = self.controlledVehicle
+        if v and MouseSteering then
+            MouseSteering:tryZeroFrontloaderHydraulics(v, "modDraw")
+        end
         if not self.mission or not self.mission.hud then return end
         if self.mission.hud.isMenuVisible or g_noHudModeEnabled then return end
         if MouseSteering then MouseSteering:draw() end
@@ -143,7 +156,8 @@ end
 local function init()
     if not g_currentModName or g_currentModName ~= "FS25_MouseSteering_MiddleClick" then return end
     if TypeManager and TypeManager.validateTypes then
-        TypeManager.validateTypes = Utils.prependedFunction(TypeManager.validateTypes, MouseSteeringValidateVehicleTypes)
+        TypeManager.validateTypes = Utils.prependedFunction(TypeManager.validateTypes, MouseSteeringValidateVehicleTypesPre)
+        TypeManager.validateTypes = Utils.appendedFunction(TypeManager.validateTypes, MouseSteeringValidateVehicleTypesPost)
     end
     if Mission00 and Mission00.load then
         Mission00.load = Utils.prependedFunction(Mission00.load, function(mission)

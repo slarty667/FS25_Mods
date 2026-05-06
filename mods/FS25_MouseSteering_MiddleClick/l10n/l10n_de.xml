@@ -25,10 +25,10 @@
 
 	<!-- Feature toggles -->
 	<text name="ms_hudBarEnabled_short">Lenkbalken-Anzeige</text>
-	<text name="ms_hudBarEnabled_long">Oberer Bildschirmrand: grüner Balken zeigt den aktuellen Lenkeinschlag. Nur sichtbar beim aktiven Lenken.</text>
+	<text name="ms_hudBarEnabled_long">Oberer Bildschirmrand: Balken zeigt den Lenkeinschlag während LMB-Lenkung und kurz danach beim Zurücklaufen zur Mitte.</text>
 
 	<text name="ms_pathIndicatorMode_short">Fahrspur-Projektion</text>
-	<text name="ms_pathIndicatorMode_long">Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = nur bei aktiver Mauslenkung, Immer = solange im Fahrzeug.</text>
+	<text name="ms_pathIndicatorMode_long">Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = bei LMB-Mauslenkung und kurzer Rücklaufphase danach, Immer = solange im Fahrzeug.</text>
 	<text name="ms_pathMode_off">Aus</text>
 	<text name="ms_pathMode_steering">Bei Lenkeinschlag</text>
 	<text name="ms_pathMode_mouse">Nur Maus</text>
@@ -36,4 +36,18 @@
 
 	<text name="ms_trailerPathEnabled_short">Anhänger-Pfad (Rückwärts)</text>
 	<text name="ms_trailerPathEnabled_long">Beim Rückwärtsfahren mit Anhänger wird eine gelbe Linie projiziert, die zeigt, wohin die Anhänger-Hinterkante ausschwenkt. Basiert auf dem aktuellen Knickwinkel und dem Zugfahrzeug-Lenkbogen — aktualisiert live.</text>
+
+	<text name="ms_steeringHeadTurnEnabled_short">Kurvenblick (Kamera)</text>
+	<text name="ms_steeringHeadTurnEnabled_long">Beim Lenken mit gedrückter LMB dreht die Innenkamera leicht mit dem Lenkeinschlag mit, sodass der Blick in die Kurve zeigt (ähnlich Motorrad: Licht/Fixpunkt in Fahrtrichtung). Maus-Umblick bleibt bei reiner LMB gesperrt; RMB+LMB = freier Umblick.</text>
+	<text name="ms_steeringHeadTurnMaxDeg_short">Kurvenblick — max. Winkel</text>
+	<text name="ms_steeringHeadTurnMaxDeg_long">Zusätzliche Kameradrehung bei vollem Lenkeinschlag (Grad pro Seite). Ein natürlicher Kurvenblick liegt oft bei ~25–40°. Für einen echten Querverkehrs- bzw. Schulterblick eher ~70–100°; ~90° ist ein kräftiger Seitblick.</text>
+	<text name="ms_steeringHeadTurnResponse_short">Kurvenblick — Ansprechverhalten</text>
+	<text name="ms_steeringHeadTurnResponse_long">Wie schnell die Kamera dem Lenken folgt und beim Loslassen zurückfedert. Höher = direkter.</text>
+	<text name="ms_steeringHeadTurnInvert_short">Kurvenblick invertieren</text>
+	<text name="ms_steeringHeadTurnInvert_long">Links/rechts tauschen, falls die Kamera bei deinem Fahrzeug oder Kamera-Mod falsch herum dreht.</text>
+
+	<text name="ms_steeringReleaseUseGameSetting_short">Lenkrückstellung aus Spiel</text>
+	<text name="ms_steeringReleaseUseGameSetting_long">Nach Loslassen der LMB versuchen, dieselbe Lenkrückstell-Geschwindigkeit wie in den Spieloptionen zu verwenden (wenn die Engine den Wert liefert). Aus = nur der Prozentwert unten.</text>
+	<text name="ms_steeringReleasePercent_short">Lenkrückstellung (Fallback %)</text>
+	<text name="ms_steeringReleasePercent_long">Wie schnell die Mauslenkung nach LMB-Loslassen zur Mitte zurückläuft. Höher = schneller (orientiert an der Lenkrückstellung im Spiel). Wird genutzt, wenn die Spieloption nicht ausgelesen werden kann. Die Skalierung ist so gewählt, dass sich die Geschwindigkeit in etwa wie bei der Tastatur anfühlt.</text>
 </l10n>
