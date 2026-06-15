@@ -63,11 +63,6 @@ NaviHelper.routeLineRootNode = nil
 NaviHelper.routeLineSegmentNodes = nil   -- table of cloned line nodes (max routeLineMaxSegments)
 NaviHelper.routeLineSharedI3D = nil     -- keep reference so shared I3D is not released
 NaviHelper.routeLineUseI3D = false      -- true when AutoDrive line.i3d was loaded successfully
--- Performance profiling (set true to trace bottlenecks in log)
-NaviHelper.profilingEnabled = false
-NaviHelper.profileData = {}
-NaviHelper.profileFrameCount = 0
-NaviHelper.profileDrawCalls = 0  -- how often drawForVehicle was called in current period
 
 local function log(fmt, ...)
     if Logging and Logging.info then
@@ -683,17 +678,6 @@ function NaviHelper:updateRoute()
     end
 end
 
--- Angle from vehicle heading to point (world x,z). Radians.
-function NaviHelper:angleToPoint(px, pz, vehicle)
-    local vx, _, vz = self:getVehiclePosition(vehicle)
-    local hy = self:getVehicleHeadingY(vehicle)
-    if not vx or not vz then return 0 end
-    local dx = px - vx
-    local dz = pz - vz
-    local a = math.atan2(-dx, dz)
-    return a - hy
-end
-
 function NaviHelper:update(dt)
     local ok, err = pcall(function()
         local v = NaviHelper.drawVehicle or (g_currentMission and g_currentMission.controlledVehicle)
@@ -705,41 +689,29 @@ function NaviHelper:update(dt)
     end
 end
 
-function NaviHelper:drawForVehicle(vehicle)
-    if not vehicle then return end
-    
-    NaviHelper.profileDrawCalls = (NaviHelper.profileDrawCalls or 0) + 1
-    local frameStartTime = netGetTime and netGetTime() or 0
-    local profileTimes = {}
-    
-    -- Cache effective target to avoid expensive route calculations every frame.
-    local currentTime = g_currentMission and g_currentMission.time or 0
-    local t0 = netGetTime and netGetTime() or 0
+-- Compute navigation data (effective target, distances, next turn) with caching.
+-- Returns a table with the values draw needs, or nil when there is nothing to show.
+function NaviHelper:computeNavData(vehicle, currentTime)
+    -- Effective target (cached to avoid expensive route calculation every frame).
     local effX, effZ, effPath, effPathIdx, destName
     if NaviHelper.lastEffectiveTarget and (currentTime - NaviHelper.lastEffectiveTargetTime) < NaviHelper.effectiveTargetCacheTime then
         effX, effZ, effPath, effPathIdx, destName = unpack(NaviHelper.lastEffectiveTarget)
-        profileTimes.getEffectiveTarget = (netGetTime and netGetTime() or 0) - t0
     else
         effX, effZ, effPath, effPathIdx, destName = self:getEffectiveTarget(vehicle)
         NaviHelper.lastEffectiveTarget = {effX, effZ, effPath, effPathIdx, destName}
         NaviHelper.lastEffectiveTargetTime = currentTime
-        -- When we have no path (e.g. drifted off route), retry path calculation sooner (effectiveTargetCacheTimeNoPath).
+        -- No path (e.g. drifted off route): retry path calc sooner.
         if not effPath or #effPath == 0 then
             local noPathCache = NaviHelper.effectiveTargetCacheTimeNoPath or 600
             NaviHelper.lastEffectiveTargetTime = currentTime - (NaviHelper.effectiveTargetCacheTime or 4000) + noPathCache
         end
         NaviHelper.lastDistanceUpdateTime = 0  -- force distance recalc when target/path changes
-        profileTimes.getEffectiveTarget = (netGetTime and netGetTime() or 0) - t0
     end
-    
-    if not effX or not effZ then return end
+    if not effX or not effZ then return nil end
 
-    local t1 = netGetTime and netGetTime() or 0
     local vx, _, vz = self:getVehiclePosition(vehicle)
-    profileTimes.getVehiclePosition = (netGetTime and netGetTime() or 0) - t1
-    if not vx or not vz then return end
+    if not vx or not vz then return nil end
 
-    local t2 = netGetTime and netGetTime() or 0
     local pointX, pointZ = effX, effZ
     local distNext, distTotal, turnDist, turnDir
     local cacheValid = (currentTime - NaviHelper.lastDistanceUpdateTime) < (NaviHelper.distanceCacheTime or 500)
@@ -752,50 +724,39 @@ function NaviHelper:drawForVehicle(vehicle)
         pointZ = NaviHelper.cachedPointZ or effZ
     elseif effPath and #effPath > 0 then
         local nextNode = effPath[2] or effPath[1]
-        pointX = nextNode.x
-        pointZ = nextNode.z
+        pointX, pointZ = nextNode.x, nextNode.z
         distNext = MathUtil.vector2Length(nextNode.x - vx, nextNode.z - vz)
-        
-        local t3 = netGetTime and netGetTime() or 0
+
+        -- First node ahead of the vehicle (start of the remaining route).
         local currentPathIdx = effPathIdx or 1
         local headingY = self:getVehicleHeadingY(vehicle)
-        local headingX = math.sin(headingY)
-        local headingZ = math.cos(headingY)
+        local headingX, headingZ = math.sin(headingY), math.cos(headingY)
         local startIdx = currentPathIdx
         for i = currentPathIdx, math.min(#effPath, currentPathIdx + 40) do
             local node = effPath[i]
             if node and node.x and node.z then
-                local dx = node.x - vx
-                local dz = node.z - vz
-                local forwardComponent = dx * headingX + dz * headingZ
-                if forwardComponent > -8.0 then
+                if (node.x - vx) * headingX + (node.z - vz) * headingZ > -8.0 then
                     startIdx = i
                     break
                 end
             end
         end
-        profileTimes.findStartIdx = (netGetTime and netGetTime() or 0) - t3
-        
-        local t4 = netGetTime and netGetTime() or 0
-        -- Exact driving distance (full path sum). Only runs every distanceCacheTime (e.g. 0.5s), so no segment cap.
+
+        -- Exact driving distance (full path sum). Runs only every distanceCacheTime, so no segment cap.
         distTotal = 0
         local startNode = effPath[startIdx]
         if startNode and startNode.x and startNode.z then
             distTotal = distTotal + MathUtil.vector2Length(startNode.x - vx, startNode.z - vz)
         end
         for i = startIdx, #effPath - 1 do
-            local p1 = effPath[i]
-            local p2 = effPath[i + 1]
+            local p1, p2 = effPath[i], effPath[i + 1]
             if p1 and p2 and p1.x and p1.z and p2.x and p2.z then
                 distTotal = distTotal + MathUtil.vector2Length(p2.x - p1.x, p2.z - p1.z)
             end
         end
-        profileTimes.calcTotalDistance = (netGetTime and netGetTime() or 0) - t4
-        
-        local t5 = netGetTime and netGetTime() or 0
+
         turnDist, turnDir = self:findNextTurn(effPath, effPathIdx, vehicle)
-        profileTimes.findNextTurn = (netGetTime and netGetTime() or 0) - t5
-        
+
         NaviHelper.lastDistanceUpdateTime = currentTime
         NaviHelper.cachedDistNext = distNext
         NaviHelper.cachedDistTotal = distTotal
@@ -814,10 +775,151 @@ function NaviHelper:drawForVehicle(vehicle)
         NaviHelper.cachedPointX = effX
         NaviHelper.cachedPointZ = effZ
     end
-    profileTimes.distanceCalc = (netGetTime and netGetTime() or 0) - t2
-    
-    -- ETA removed: not useful for short routes in farming simulator.
 
+    return {
+        effPath = effPath, effPathIdx = effPathIdx, destName = destName,
+        vx = vx, vz = vz, distTotal = distTotal,
+        turnDist = turnDist, turnDir = turnDir,
+    }
+end
+
+-- Pick the path index to start drawing the route line from: the first node ahead of the
+-- vehicle (relaxed tolerance so the line stays visible beside the path), else the closest node.
+function NaviHelper:routeLineStartIndex(pathToDraw, effPathIdx, vx, vz, vehicle)
+    local startIdx = 1
+    if effPathIdx and effPathIdx > 1 then startIdx = math.max(1, effPathIdx - 1) end
+    if not (vx and vz) then return startIdx end
+
+    local headingY = self:getVehicleHeadingY(vehicle)
+    local headingX, headingZ = math.sin(headingY), math.cos(headingY)
+    local pathIdx = effPathIdx or 1
+    for i = math.max(1, pathIdx - 1), math.min(#pathToDraw, pathIdx + 60) do
+        local node = pathToDraw[i]
+        if node and node.x and node.z then
+            if (node.x - vx) * headingX + (node.z - vz) * headingZ > -50 then
+                return math.max(1, i - 2)
+            end
+        end
+    end
+    -- Far off path: anchor at the closest node so the line stays visible.
+    local bestI, bestDistSq = 1, 1e10
+    for i = 1, math.min(#pathToDraw, pathIdx + 80) do
+        local node = pathToDraw[i]
+        if node and node.x and node.z then
+            local d2 = (node.x - vx) * (node.x - vx) + (node.z - vz) * (node.z - vz)
+            if d2 < bestDistSq then bestDistSq = d2; bestI = i end
+        end
+    end
+    return math.max(1, bestI - 2)
+end
+
+-- Draw the route line on the ground (AutoDrive's I3D segments, or a drawDebugLine fallback).
+function NaviHelper:drawRouteLine(vehicle, pathToDraw, effPathIdx, vx, vz)
+    if not NaviHelper.drawRouteOnGround then return end
+
+    local haveSegments = NaviHelper.routeLineUseI3D and NaviHelper.routeLineSegmentNodes
+    if not pathToDraw or #pathToDraw <= 1 then
+        -- Hide all segments when there is no path.
+        if haveSegments then
+            pcall(function()
+                for _, seg in ipairs(NaviHelper.routeLineSegmentNodes) do
+                    if setVisibility then setVisibility(seg, false) end
+                end
+            end)
+        end
+        return
+    end
+
+    local startIdx = self:routeLineStartIndex(pathToDraw, effPathIdx, vx, vz, vehicle)
+    local endIdx = math.min(startIdx + NaviHelper.routeLineMaxSegments, #pathToDraw - 1)
+    local numSegmentsToShow = endIdx - startIdx + 1
+
+    if haveSegments and NaviHelper.routeLineRootNode and setWorldTranslation and setWorldRotation and setScale then
+        -- AutoDrive's line.i3d segments (our scene, so they stay visible).
+        pcall(function()
+            for k, seg in ipairs(NaviHelper.routeLineSegmentNodes) do
+                local a = (k <= numSegmentsToShow) and pathToDraw[startIdx + k - 1] or nil
+                local b_ = (k <= numSegmentsToShow) and pathToDraw[startIdx + k] or nil
+                if a and b_ and a.x and a.z and b_.x and b_.z then
+                    local y0, y1 = a.y or 0, b_.y or 0
+                    if (y0 == 0 or y1 == 0) and g_terrainNode and getTerrainHeightAtWorldPos then
+                        if y0 == 0 then y0 = getTerrainHeightAtWorldPos(g_terrainNode, a.x, 0, a.z) or 0 end
+                        if y1 == 0 then y1 = getTerrainHeightAtWorldPos(g_terrainNode, b_.x, 0, b_.z) or 0 end
+                    end
+                    y0, y1 = y0 + 0.2, y1 + 0.2
+                    local dx, dz = b_.x - a.x, b_.z - a.z
+                    local len = math.sqrt(dx * dx + dz * dz)
+                    if len < 0.01 then len = 1 end
+                    setWorldTranslation(seg, (a.x + b_.x) * 0.5, (y0 + y1) * 0.5, (a.z + b_.z) * 0.5)
+                    setWorldRotation(seg, 0, math.atan2(dx, dz), 0)
+                    setScale(seg, (NaviHelper.routeLineThickness or 1), 1, len)
+                    if setVisibility then setVisibility(seg, true) end
+                elseif setVisibility then
+                    setVisibility(seg, false)
+                end
+            end
+        end)
+    elseif drawDebugLine then
+        -- Fallback: no I3D segments / AutoDrive not available.
+        pcall(function()
+            local r, g, b = NaviHelper.routeLineColorR, NaviHelper.routeLineColorG, NaviHelper.routeLineColorB
+            for i = startIdx, endIdx do
+                local a, b_ = pathToDraw[i], pathToDraw[i + 1]
+                if a and b_ and a.x and a.z and b_.x and b_.z then
+                    local y0, y1 = a.y or 0, b_.y or 0
+                    if (y0 == 0 or y1 == 0) and g_terrainNode and getTerrainHeightAtWorldPos then
+                        if y0 == 0 then y0 = getTerrainHeightAtWorldPos(g_terrainNode, a.x, 0, a.z) or 0 end
+                        if y1 == 0 then y1 = getTerrainHeightAtWorldPos(g_terrainNode, b_.x, 0, b_.z) or 0 end
+                    end
+                    y0, y1 = y0 + 0.2, y1 + 0.2
+                    drawDebugLine(a.x, y0, a.z, r, g, b, b_.x, y1, b_.z, r, g, b, false)
+                end
+            end
+        end)
+    end
+end
+
+-- Draw the HUD text: destination name, next-turn instruction, total distance.
+function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath)
+    local function t(key, fallback)
+        return (g_i18n and g_i18n.getText and g_i18n:getText(key)) or fallback
+    end
+    -- Turn instruction: distance to next turn; if going straight, only show when very close (like a real navi).
+    local turnStr
+    if turnDist and turnDir and turnDist < 5000 then
+        turnStr = string.format("%s %.0fm %s", t("NAVIHELPER_HUD_IN", "in"), turnDist, turnDir)
+    elseif effPath and #effPath > 2 and distTotal and distTotal < 50 then
+        turnStr = string.format("%.0f m", distTotal)
+    end
+    local totalStr = (distTotal and distTotal < 1e6) and string.format("%.0f m", distTotal) or "-"
+
+    local renderFn = renderText or renderTextOverlay
+    if not renderFn then return end
+    pcall(function()
+        if setTextAlignment then
+            setTextAlignment(RenderText and RenderText.ALIGN_CENTER or 1)
+        end
+        if setTextColor then setTextColor(1, 1, 1, 1) end
+        local cx = NaviHelper.hudCenterX
+        if destName and destName ~= "" then
+            renderFn(cx, NaviHelper.hudCenterY + 0.04, 0.018, destName)
+        end
+        if turnStr then
+            renderFn(cx, NaviHelper.hudCenterY + 0.02, 0.02, turnStr)
+        end
+        renderFn(cx, NaviHelper.hudCenterY, 0.018, t("NAVIHELPER_HUD_TOTAL", "Total") .. ": " .. totalStr)
+    end)
+end
+
+function NaviHelper:drawForVehicle(vehicle)
+    if not vehicle then return end
+    local currentTime = g_currentMission and g_currentMission.time or 0
+
+    local nav = self:computeNavData(vehicle, currentTime)
+    if not nav then return end
+
+    -- Destination reached handling.
+    local distTotal = nav.distTotal
     if distTotal and distTotal >= 3 then
         NaviHelper._destinationReachedNotifShown = false
     end
@@ -827,7 +929,7 @@ function NaviHelper:drawForVehicle(vehicle)
             local msg = (g_i18n and g_i18n.getText and g_i18n:getText("NAVIHELPER_MSG_DESTINATION_REACHED")) or "Ziel erreicht"
             showIngameNotification(msg)
         end
-        if not destName then
+        if not nav.destName then
             local v = NaviHelper.drawVehicle
             local key = v and vehicleKey(v)
             if key and NaviHelper.vehicleTargets then NaviHelper.vehicleTargets[key] = nil end
@@ -835,212 +937,8 @@ function NaviHelper:drawForVehicle(vehicle)
         return
     end
 
-    local t6 = netGetTime and netGetTime() or 0
-    local pathToDraw = effPath
-    if NaviHelper.drawRouteOnGround then
-        if NaviHelper.routeLineUseI3D and NaviHelper.routeLineSegmentNodes and (not pathToDraw or #pathToDraw <= 1) then
-            -- Hide all segments when there is no path.
-            pcall(function()
-                for _, seg in ipairs(NaviHelper.routeLineSegmentNodes) do
-                    if setVisibility then setVisibility(seg, false) end
-                end
-            end)
-        end
-    end
-    if NaviHelper.drawRouteOnGround and pathToDraw and #pathToDraw > 1 then
-        local startIdx = 1
-        if effPath and effPathIdx and effPathIdx > 1 then
-            startIdx = math.max(1, effPathIdx - 1)
-        end
-        -- Anchor line to "first node ahead" with very relaxed tolerance so line stays visible when beside path (e.g. left lane).
-        -- If no node is "ahead", use closest path node by distance so the line still shows.
-        if vx and vz then
-            local headingY = self:getVehicleHeadingY(vehicle)
-            local headingX = math.sin(headingY)
-            local headingZ = math.cos(headingY)
-            local pathIdx = effPathIdx or 1
-            local searchFrom = math.max(1, pathIdx - 1)
-            local searchTo = math.min(#pathToDraw, pathIdx + 60)
-            local foundAhead = false
-            for i = searchFrom, searchTo do
-                local node = pathToDraw[i]
-                if node and node.x and node.z then
-                    local dx = node.x - vx
-                    local dz = node.z - vz
-                    local forwardComponent = dx * headingX + dz * headingZ
-                    if forwardComponent > -50 then
-                        startIdx = math.max(1, i - 2)
-                        foundAhead = true
-                        break
-                    end
-                end
-            end
-            if not foundAhead then
-                -- Far off path (e.g. long time on left): show line from closest path node so it stays visible.
-                local bestI, bestDistSq = 1, 1e10
-                for i = 1, math.min(#pathToDraw, pathIdx + 80) do
-                    local node = pathToDraw[i]
-                    if node and node.x and node.z then
-                        local d2 = (node.x - vx) * (node.x - vx) + (node.z - vz) * (node.z - vz)
-                        if d2 < bestDistSq then
-                            bestDistSq = d2
-                            bestI = i
-                        end
-                    end
-                end
-                startIdx = math.max(1, bestI - 2)
-            end
-        end
-        local endIdx = math.min(startIdx + NaviHelper.routeLineMaxSegments, #pathToDraw - 1)
-        local numSegmentsToShow = endIdx - startIdx + 1
-
-        if NaviHelper.routeLineUseI3D and NaviHelper.routeLineSegmentNodes and NaviHelper.routeLineRootNode and setWorldTranslation and setWorldRotation and setScale then
-            -- Use AutoDrive's line.i3d segments (our scene, so they stay visible).
-            pcall(function()
-                for k, seg in ipairs(NaviHelper.routeLineSegmentNodes) do
-                    if k <= numSegmentsToShow then
-                        local a = pathToDraw[startIdx + k - 1]
-                        local b_ = pathToDraw[startIdx + k]
-                        if a and b_ and a.x and a.z and b_.x and b_.z then
-                            local y0 = a.y or 0
-                            local y1 = b_.y or 0
-                            if (y0 == 0 or y1 == 0) and g_terrainNode and getTerrainHeightAtWorldPos then
-                                if y0 == 0 then y0 = getTerrainHeightAtWorldPos(g_terrainNode, a.x, 0, a.z) or 0 end
-                                if y1 == 0 then y1 = getTerrainHeightAtWorldPos(g_terrainNode, b_.x, 0, b_.z) or 0 end
-                            end
-                            y0 = y0 + 0.2
-                            y1 = y1 + 0.2
-                            local midX = (a.x + b_.x) * 0.5
-                            local midY = (y0 + y1) * 0.5
-                            local midZ = (a.z + b_.z) * 0.5
-                            local dx = b_.x - a.x
-                            local dz = b_.z - a.z
-                            local len = math.sqrt(dx * dx + dz * dz)
-                            if len < 0.01 then len = 1 end
-                            local rotY = math.atan2(dx, dz)
-                            setWorldTranslation(seg, midX, midY, midZ)
-                            setWorldRotation(seg, 0, rotY, 0)
-                            setScale(seg, (NaviHelper.routeLineThickness or 1), 1, len)
-                            if setVisibility then setVisibility(seg, true) end
-                        end
-                    else
-                        if setVisibility then setVisibility(seg, false) end
-                    end
-                end
-            end)
-        elseif drawDebugLine then
-            -- Fallback: draw path with drawDebugLine (no I3D or AutoDrive not available).
-            pcall(function()
-                local r, g, b = NaviHelper.routeLineColorR, NaviHelper.routeLineColorG, NaviHelper.routeLineColorB
-                for i = startIdx, endIdx do
-                    local a = pathToDraw[i]
-                    local b_ = pathToDraw[i + 1]
-                    if a and b_ and a.x and a.z and b_.x and b_.z then
-                        local y0 = a.y or 0
-                        local y1 = b_.y or 0
-                        if (y0 == 0 or y1 == 0) and g_terrainNode and getTerrainHeightAtWorldPos then
-                            if y0 == 0 then y0 = getTerrainHeightAtWorldPos(g_terrainNode, a.x, 0, a.z) or 0 end
-                            if y1 == 0 then y1 = getTerrainHeightAtWorldPos(g_terrainNode, b_.x, 0, b_.z) or 0 end
-                        end
-                        y0 = y0 + 0.2
-                        y1 = y1 + 0.2
-                        drawDebugLine(a.x, y0, a.z, r, g, b, b_.x, y1, b_.z, r, g, b, false)
-                    end
-                end
-            end)
-        end
-    end
-    profileTimes.drawRouteLines = (netGetTime and netGetTime() or 0) - t6
-
-    local t7 = netGetTime and netGetTime() or 0
-    -- angleToPoint: angle to target from vehicle heading. FS25 heading convention can be 90° off vs screen.
-    local angleRaw = self:angleToPoint(pointX, pointZ, vehicle)
-    local angle = -angleRaw - math.pi * 0.5  -- negate + 90° so "ahead" shows ↑ not ←
-    local arrowChar
-    do
-        -- 4 cardinals: ↑ ahead, → right, ↓ behind, ← left (UTF-8)
-        local a = (angle + math.pi) / (2 * math.pi) * 4
-        local idx = (math.floor(a) % 4) + 1
-        local arrows = { "\226\134\145", "\226\134\146", "\226\134\147", "\226\134\144" }
-        arrowChar = arrows[idx] or ">"
-    end
-    profileTimes.angleCalc = (netGetTime and netGetTime() or 0) - t7
-
-    -- Format turn instruction: show distance to next turn (not next node if it's straight).
-    -- Only show distance if there's a turn ahead, otherwise show nothing (like real navi).
-    local turnStr = nil
-    if turnDist and turnDir and turnDist < 5000 then  -- show turns up to 5km ahead
-        turnStr = string.format("in %.0fm %s", turnDist, turnDir)
-    elseif effPath and #effPath > 2 then
-        -- No turn found, but we have a path. Check if we're going straight to destination.
-        -- If so, don't show distance (like real navi - it only shows distance to next action).
-        -- Only show if we're very close (< 50m) to final destination.
-        if distTotal and distTotal < 50 then
-            turnStr = string.format("%.0f m", distTotal)
-        end
-        -- Otherwise: no display (going straight, no action needed)
-    end
-    -- If turnStr is still nil, we won't display it (real navi behavior)
-    
-    local totalStr = (distTotal and distTotal < 1e6) and string.format("%.0f m", distTotal) or "-"
-    
-    local t8 = netGetTime and netGetTime() or 0
-    pcall(function()
-        -- Center alignment for all text.
-        if setTextAlignment then 
-            local alignCenter = RenderText and RenderText.ALIGN_CENTER or 1
-            setTextAlignment(alignCenter)
-        end
-        if setTextColor then setTextColor(1, 1, 1, 1) end
-        
-        local destY = NaviHelper.hudCenterY + 0.04
-        local turnY = NaviHelper.hudCenterY + 0.02
-        local totalY = NaviHelper.hudCenterY
-        
-        if renderText then
-            -- Destination name (centered, no "To:" prefix).
-            if destName and destName ~= "" then
-                renderText(NaviHelper.hudCenterX, destY, 0.018, destName)
-            end
-            -- Turn instruction or next distance (only if there's a turn or very close to destination).
-            if turnStr then
-                renderText(NaviHelper.hudCenterX, turnY, 0.02, turnStr)
-            end
-            -- Total distance.
-            renderText(NaviHelper.hudCenterX, totalY, 0.018, ("Total: %s"):format(totalStr))
-        elseif renderTextOverlay then
-            if destName and destName ~= "" then
-                renderTextOverlay(NaviHelper.hudCenterX, destY, 0.018, destName)
-            end
-            if turnStr then
-                renderTextOverlay(NaviHelper.hudCenterX, turnY, 0.02, turnStr)
-            end
-            renderTextOverlay(NaviHelper.hudCenterX, totalY, 0.018, ("Total: %s"):format(totalStr))
-        end
-    end)
-    profileTimes.renderText = (netGetTime and netGetTime() or 0) - t8
-    
-    -- Log profiling every 15 frames so we get data even at low FPS (e.g. ~2s at 8fps).
-    if NaviHelper.profilingEnabled then
-        NaviHelper.profileFrameCount = (NaviHelper.profileFrameCount or 0) + 1
-        if NaviHelper.profileFrameCount % 15 == 0 then
-            local totalTime = (netGetTime and netGetTime() or 0) - frameStartTime
-            local calls = NaviHelper.profileDrawCalls or 0
-            NaviHelper.profileDrawCalls = 0
-            log("PERF: calls=%d getEff=%.4f getVeh=%.4f dist=%.4f findStart=%.4f calcTotal=%.4f findTurn=%.4f drawLines=%.4f angle=%.4f text=%.4f TOTAL=%.4f",
-                calls,
-                profileTimes.getEffectiveTarget or 0,
-                profileTimes.getVehiclePosition or 0,
-                profileTimes.distanceCalc or 0,
-                profileTimes.findStartIdx or 0,
-                profileTimes.calcTotalDistance or 0,
-                profileTimes.findNextTurn or 0,
-                profileTimes.drawRouteLines or 0,
-                profileTimes.angleCalc or 0,
-                profileTimes.renderText or 0,
-                totalTime)
-        end
-    end
+    self:drawRouteLine(vehicle, nav.effPath, nav.effPathIdx, nav.vx, nav.vz)
+    self:drawHud(distTotal, nav.turnDist, nav.turnDir, nav.destName, nav.effPath)
 end
 
 function NaviHelper:draw()
