@@ -2,6 +2,8 @@
 <modDesc descVersion="105">
 	<author>MouseSteering</author>
 	<version>0.9.0.0</version>
+	<iconFilename>storeItem.png</iconFilename>
+	<iconFilenameSmall>storeItem.png</iconFilenameSmall>
 	<title>
 		<en>Hold To Steer</en>
 		<de>Hold To Steer</de>

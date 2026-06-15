@@ -2,6 +2,8 @@
 <modDesc descVersion="105">
 	<author>CruiseControlPlus</author>
 	<version>1.0.0.0</version>
+	<iconFilename>storeItem.png</iconFilename>
+	<iconFilenameSmall>storeItem.png</iconFilenameSmall>
 	<title>
 		<en>Cruise Control Plus</en>
 		<de>Tempomat Plus</de>
