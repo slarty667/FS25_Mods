@@ -98,6 +98,13 @@ local function vehicleKey(vehicle)
 end
 
 function NaviHelper:loadMap(name)
+    -- Load persisted tuning values (modSettings/FS25_NaviHelper.xml) and apply them.
+    if NaviHelperSettings and NaviHelperSettings.loadFromXML then
+        NaviHelperSettings:loadFromXML()
+        for _, k in ipairs(NaviHelperSettings:keys()) do
+            if NaviHelperSettings[k] ~= nil then NaviHelper[k] = NaviHelperSettings[k] end
+        end
+    end
     log("loaded drawRouteOnGround=%s effectiveTargetCache=%dms distanceCache=%dms",
         tostring(NaviHelper.drawRouteOnGround),
         NaviHelper.effectiveTargetCacheTime or 0, NaviHelper.distanceCacheTime or 500)
@@ -258,6 +265,13 @@ function NaviHelper:onSetTargetAhead(vehicle)
 end
 
 function NaviHelper:deleteMap()
+    -- Persist current tuning values (copy back from NaviHelper in case they changed at runtime).
+    if NaviHelperSettings and NaviHelperSettings.saveToXML then
+        for _, k in ipairs(NaviHelperSettings:keys()) do
+            if NaviHelper[k] ~= nil then NaviHelperSettings[k] = NaviHelper[k] end
+        end
+        NaviHelperSettings:saveToXML()
+    end
     if NaviHelper.originalMapMouseEvent and IngameMapElement then
         IngameMapElement.mouseEvent = NaviHelper.originalMapMouseEvent
     end
