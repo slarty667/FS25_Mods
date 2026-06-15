@@ -3,6 +3,21 @@
 Stand: 2026-06-15. Plan-Modus-Ergebnis (software-planning). SSoT für das Feature.
 Code erst nach Abnahme.
 
+## Umsetzungsstand (2026-06-16)
+- **P0** erledigt (getPathFromToWorld-Arg-Bug, getCurrentPathFromVehicle-Bug). Commits 4bab22d, cfec383.
+- **P1** entfällt: alte `mapClickToWorld`-Mathe komplett rausgeworfen statt verifiziert.
+  Stattdessen `InGameMenuMapFrame.onClickMap`-Hook (liefert Weltkoordinaten direkt,
+  wie WayPointGPS) — robust, kein Selbstbau-Transform mehr.
+- **P2 + P3** in einem Rutsch gebaut (v1.2.0.0): Hook umgestellt, `route[]`-Struktur
+  mit `targetX/Z`-Shim, Prioritäts-Umkehr (manuelle Route vor AD), Cache-Invalidierung
+  bei jeder Mutation, `buildRoutePath` (Hybrid pro Segment: AD-Straße sonst Linie),
+  Strg+Klick = Punkt setzen (1. = Ziel, weitere = Zwischenpunkt davor),
+  Umschalt+Klick = letzten Punkt löschen. Alt+M ist nur noch ein Hinweis.
+  **Braucht In-Game-Test** (nur Markus kann das).
+- **P4** (Klick-auf-Punkt löschen, Drag verschieben) noch offen.
+- Risiko-Hinweis für den Test: `onClickMap`-Signatur exakt von WayPointGPS übernommen
+  `(frame, element, worldX, worldZ)`; Modifier mit keyEvent-Flag + isKeyPressed-Fallback.
+
 ## Ziel
 NaviHelper von „AutoDrive ist Pflicht-Unterbau" zu „AutoDrive ist eine Quelle"
 umbauen: vollwertige Karten-basierte Routenplanung, optional mit Zwischen-Wegpunkten,
@@ -17,8 +32,14 @@ Google-Maps-artiges Editieren auf der Karte.
 - **Routing:** Hybrid — pro Segment AD-Straßenrouting wenn AutoDrive vorhanden,
   sonst gerade Linie.
 - **Persistenz:** Nur zur Laufzeit (kein Savegame).
-- **Klick-Modus:** Alt+M aktiviert; bleibt an, solange die Karte offen ist; jeder
-  Klick sammelt/editiert; Karte schließen beendet den Modus.
+- **Karten-Interaktion (revidiert 2026-06-16):** KEIN Alt+M-Modus mehr. Punkte
+  werden direkt in der großen ESC-Karte per Modifier-Klick gesetzt (wie
+  WayPointGPS: Strg+Linksklick — am Mac ggf. Alternative, da Ctrl+Click dort
+  Rechtsklick ist; beim Bauen testen). Kein Modus-State, kein versehentliches
+  Setzen durch normalen Klick. Alt+M / mapSelectionMode entfällt; die Action kann
+  als optionaler Zweitweg bleiben oder raus.
+- (verworfen) ~~Klick-Modus per Alt+M, bleibt bis Karte zu~~ — durch
+  Modifier-Klick-direkt ersetzt, intuitiver + kein Mac-Alt-Problem.
 - **Editieren (Google-Maps-Stil):** Klick auf leere Stelle = neuer Punkt; Klick auf
   bestehenden Punkt = löschen; Drag auf Punkt = verschieben.
 

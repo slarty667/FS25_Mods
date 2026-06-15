@@ -9,4 +9,5 @@
 	<text name="NAVIHELPER_DIR_RIGHT">right</text>
 	<text name="NAVIHELPER_HUD_IN">in</text>
 	<text name="NAVIHELPER_HUD_TOTAL">Total</text>
+	<text name="NAVIHELPER_MSG_MAP_HINT">NaviHelper: In the map, Ctrl+click = add point, Shift+click = remove last.</text>
 </l10n>

@@ -12,7 +12,6 @@ NaviHelper.LOG_PREFIX = "[NaviHelper]"
 -- State: nav aid is OFF until user presses Alt+N (toggle). Then show arrow if target exists, else show notification.
 NaviHelper.uiVisible = true
 NaviHelper.navAidOn = false   -- User activates with Alt+N; if no target we show ingame message
-NaviHelper.mapSelectionMode = false
 NaviHelper.pathDirty = true
 NaviHelper.DRIFT_THRESHOLD_SQ = 50 * 50  -- recalc route only after vehicle drifts this far (squared meters)
 NaviHelper.lastRouteUpdateTime = 0
@@ -44,7 +43,6 @@ NaviHelper.arrowOverlayId = nil
 NaviHelper.arrowSize = 0.04
 NaviHelper.hudCenterX = 0.5
 NaviHelper.hudCenterY = 0.12
-NaviHelper.originalMapMouseEvent = nil
 -- Vehicle to draw for (controlledVehicle is nil in draw context in FS25; we store it when user presses Alt+N).
 NaviHelper.drawVehicle = nil
 -- Per-vehicle cache for manual target (targetX, targetZ, pathNodes) so switching vehicles shows the right path or none.
@@ -122,14 +120,16 @@ function NaviHelper:loadMap(name)
     -- Try to load AutoDrive's line.i3d for route line (our scene node, so it won't be cleared by their manager).
     NaviHelper:tryLoadAutoDriveRouteLineI3D()
 
-    -- Hook map mouse event for map-click target selection
-    if IngameMapElement and IngameMapElement.mouseEvent then
-        NaviHelper.originalMapMouseEvent = IngameMapElement.mouseEvent
-        IngameMapElement.mouseEvent = Utils.overwrittenFunction(IngameMapElement.mouseEvent, NaviHelper.ingameMapMouseEvent)
+    -- Hook the in-game map frame's click callback. It hands us WORLD coordinates
+    -- directly (frame, element, worldX, worldZ) — robust, unlike a self-rolled
+    -- screen->world conversion. Ctrl+click = add point, Shift+click = remove last.
+    if InGameMenuMapFrame ~= nil and InGameMenuMapFrame.onClickMap ~= nil and not NaviHelper._mapClickHooked then
+        InGameMenuMapFrame.onClickMap = Utils.appendedFunction(InGameMenuMapFrame.onClickMap, NaviHelper.onMapClick)
+        NaviHelper._mapClickHooked = true
+        log("map click hook installed (InGameMenuMapFrame.onClickMap)")
     end
 
-    -- Action events are registered by NaviHelperVehicle specialization (VEHICLE category)
-    -- so keys (Alt+N, F10, etc.) work in vehicle context. No global registration here.
+    -- Action events are registered by NaviHelperVehicle specialization (VEHICLE category).
 end
 
 -- Load AutoDrive's drawing/line.i3d and create a segment pool for our route line (our scene, so nothing clears it).
@@ -227,39 +227,63 @@ function NaviHelper:onToggleUI(vehicle)
     end
 end
 
+-- Invalidate caches after a route change so it shows immediately (the ~4s
+-- effective-target cache would otherwise make a fresh click feel dead).
+function NaviHelper:invalidateRouteCaches()
+    NaviHelper.pathDirty = true
+    NaviHelper.lastEffectiveTarget = nil
+    NaviHelper.lastDistanceUpdateTime = 0
+    NaviHelper.lastValidPath = nil
+    NaviHelper.lastValidTargetX = nil
+    NaviHelper.lastValidTargetZ = nil
+end
+
+-- Per-vehicle manual route slot. route = ordered list of {x,z}; last element is
+-- the destination (1st click), earlier elements are intermediate waypoints.
+function NaviHelper:routeSlot(vehicle, create)
+    local key = vehicle and vehicleKey(vehicle)
+    if not key then return nil, nil end
+    if not NaviHelper.vehicleTargets then NaviHelper.vehicleTargets = {} end
+    local slot = NaviHelper.vehicleTargets[key]
+    if not slot and create then
+        slot = { route = {}, pathNodes = nil, currentPathIndex = 1 }
+        NaviHelper.vehicleTargets[key] = slot
+    end
+    return slot, key
+end
+
 function NaviHelper:onClearTarget(vehicle)
-    vehicle = vehicle or (g_currentMission and g_currentMission.controlledVehicle)
+    vehicle = vehicle or NaviHelper.drawVehicle or (g_currentMission and g_currentMission.controlledVehicle)
     local key = vehicle and vehicleKey(vehicle)
     if key and NaviHelper.vehicleTargets then
         NaviHelper.vehicleTargets[key] = nil
     end
-    NaviHelper.pathDirty = true
-    NaviHelper.mapSelectionMode = false
-    NaviHelper.lastValidPath = nil
-    NaviHelper.lastValidTargetX = nil
-    NaviHelper.lastValidTargetZ = nil
-    log("Target cleared")
+    self:invalidateRouteCaches()
+    log("Route cleared")
 end
 
+-- No map-selection mode anymore: points are set with Ctrl+click directly in the
+-- big map. The bound key just shows a hint.
 function NaviHelper:onMapSelectionMode()
-    NaviHelper.mapSelectionMode = not NaviHelper.mapSelectionMode
-    log("Map selection mode %s", NaviHelper.mapSelectionMode and "ON - click map to set destination" or "off")
+    local msg = (g_i18n and g_i18n.getText and g_i18n:getText("NAVIHELPER_MSG_MAP_HINT"))
+        or "NaviHelper: In der Karte Strg+Klick = Punkt setzen, Umschalt+Klick = letzten löschen."
+    showIngameNotification(msg)
 end
 
 function NaviHelper:onSetTargetAhead(vehicle)
-    local v = vehicle or (g_currentMission and g_currentMission.controlledVehicle)
+    local v = vehicle or NaviHelper.drawVehicle or (g_currentMission and g_currentMission.controlledVehicle)
     if v and v.components and v.components[1] and v.components[1].node then
         local x, _, z = getWorldTranslation(v.components[1].node)
         local heading = self:getVehicleHeadingY(v)
         local dist = 80
         local tx = x + math.sin(-heading) * dist
         local tz = z + math.cos(-heading) * dist
-        local key = vehicleKey(v)
-        if key then
-            if not NaviHelper.vehicleTargets then NaviHelper.vehicleTargets = {} end
-            NaviHelper.vehicleTargets[key] = { targetX = tx, targetZ = tz, pathNodes = nil, currentPathIndex = nil }
+        local slot = self:routeSlot(v, true)
+        if slot then
+            slot.route = { { x = tx, z = tz } }   -- single destination
+            slot.pathNodes = nil
         end
-        NaviHelper.pathDirty = true
+        self:invalidateRouteCaches()
         log("Target set ahead: %.1f, %.1f", tx, tz)
     end
 end
@@ -272,9 +296,7 @@ function NaviHelper:deleteMap()
         end
         NaviHelperSettings:saveToXML()
     end
-    if NaviHelper.originalMapMouseEvent and IngameMapElement then
-        IngameMapElement.mouseEvent = NaviHelper.originalMapMouseEvent
-    end
+    -- The onClickMap hook is appended once (guarded by _mapClickHooked); nothing to undo.
     NaviHelper.arrowOverlayId = nil
     -- Release route line I3D (AutoDrive asset).
     if NaviHelper.routeLineSharedI3D and releaseSharedI3DFile then
@@ -286,50 +308,81 @@ function NaviHelper:deleteMap()
     NaviHelper.routeLineUseI3D = false
 end
 
--- Convert map click (screen pos) to world x,z when map is open
-function NaviHelper.mapClickToWorld(screenX, screenY)
-    if not g_inGameMenu or not g_inGameMenu.isOpen then return nil, nil end
-    local page = g_inGameMenu.pageMapOverview
-    if not page or not page.ingameMap then return nil, nil end
-    local base = g_inGameMenu.baseIngameMap
-    if not base or not base.layout or not base.worldSizeX or not base.worldSizeZ then return nil, nil end
-
-    local mapEl = page.ingameMap
-    local clipMinX = mapEl.absoluteSizeOffset and mapEl.absoluteSizeOffset[1] or 0
-    local clipMinY = mapEl.absoluteSizeOffset and mapEl.absoluteSizeOffset[2] or 0
-    local w = (mapEl.absSize and mapEl.absSize[1]) or 1
-    local h = (mapEl.absSize and mapEl.absSize[2]) or 1
-    local relX = (screenX - clipMinX) / w
-    local relY = (screenY - clipMinY) / h
-    if relX < 0 or relX > 1 or relY < 0 or relY > 1 then return nil, nil end
-
-    local offsetX = base.worldCenterOffsetX or 0
-    local offsetZ = base.worldCenterOffsetZ or 0
-    local sizeX = base.worldSizeX or 4096
-    local sizeZ = base.worldSizeZ or 4096
-    local scaledX = relX * 0.5 + 0.25
-    local scaledZ = relY * 0.5 + 0.25
-    local worldX = (scaledX - 0.25) * 2 * sizeX - offsetX
-    local worldZ = (scaledZ - 0.25) * 2 * sizeZ - offsetZ
-    return worldX, worldZ
+-- Modifier helpers: prefer the flag tracked in keyEvent, fall back to the raw
+-- key state (mirrors WayPointGPS — isKeyPressed alone can miss during the click).
+local function isCtrlDown()
+    if NaviHelper.ctrlDown then return true end
+    return Input ~= nil and Input.isKeyPressed ~= nil
+        and (Input.isKeyPressed(Input.KEY_lctrl) or Input.isKeyPressed(Input.KEY_rctrl))
 end
 
-function NaviHelper:ingameMapMouseEvent(superFunc, posX, posY, isDown, isUp, button)
-    if NaviHelper.mapSelectionMode and isDown and button == 1 then
-        local wx, wz = NaviHelper.mapClickToWorld(posX, posY)
-        if wx and wz then
-    local v = g_currentMission and g_currentMission.controlledVehicle
-    local key = v and vehicleKey(v)
-    if key then
-        if not NaviHelper.vehicleTargets then NaviHelper.vehicleTargets = {} end
-        NaviHelper.vehicleTargets[key] = { targetX = wx, targetZ = wz, pathNodes = nil, currentPathIndex = nil }
+local function isShiftDown()
+    if NaviHelper.shiftDown then return true end
+    return Input ~= nil and Input.isKeyPressed ~= nil
+        and (Input.isKeyPressed(Input.KEY_lshift) or Input.isKeyPressed(Input.KEY_rshift))
+end
+
+-- Keep the destination mirrored to slot.targetX/targetZ so the existing
+-- distance/reached code (which still reads targetX/targetZ) keeps working.
+function NaviHelper:syncDestShim(slot)
+    local n = (slot.route and #slot.route) or 0
+    if n > 0 then
+        slot.targetX, slot.targetZ = slot.route[n].x, slot.route[n].z
+    else
+        slot.targetX, slot.targetZ = nil, nil
     end
-    NaviHelper.pathDirty = true
-    NaviHelper.mapSelectionMode = false
-    log("Target set from map: %.1f, %.1f", wx, wz)
+end
+
+-- Appended to InGameMenuMapFrame.onClickMap: it hands us world coordinates
+-- directly. Ctrl+click adds a point, Shift+click removes the most recent one.
+-- Plain clicks are ignored so normal map use is unaffected.
+function NaviHelper.onMapClick(frame, element, worldX, worldZ)
+    if g_inGameMenu == nil or not g_inGameMenu.isOpen then return end
+    if worldX == nil or worldZ == nil then return end
+    local ctrl, shift = isCtrlDown(), isShiftDown()
+    if not (ctrl or shift) then return end
+
+    -- Debounce: the callback can fire more than once for a single physical click.
+    local now = (g_currentMission and g_currentMission.time) or 0
+    if NaviHelper._lastMapClickTime and (now - NaviHelper._lastMapClickTime) < 250 then return end
+    NaviHelper._lastMapClickTime = now
+
+    local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
+        or (g_currentMission and g_currentMission.controlledVehicle)
+    if v == nil then
+        log("map click ignored: no active vehicle")
+        return
+    end
+
+    if shift then
+        local slot = NaviHelper:routeSlot(v, false)
+        if slot and slot.route and #slot.route > 0 then
+            table.remove(slot.route)                  -- drop most recent point (LIFO)
+            if #slot.route == 0 then
+                NaviHelper:onClearTarget(v)
+                log("map: last point removed, route empty")
+                return
+            end
+            NaviHelper:syncDestShim(slot)
+            NaviHelper:invalidateRouteCaches()
+            log("map: removed last point (%d left)", #slot.route)
         end
+        return
     end
-    return superFunc(self, posX, posY, isDown, isUp, button)
+
+    -- Ctrl: add a point. 1st click = destination (driven last); each further click
+    -- = an intermediate waypoint inserted BEFORE the destination, so drive order is
+    -- vehicle -> waypoints (in click order) -> destination.
+    local slot = NaviHelper:routeSlot(v, true)
+    local p = { x = worldX, z = worldZ }
+    if #slot.route == 0 then
+        slot.route[1] = p
+    else
+        table.insert(slot.route, #slot.route, p)
+    end
+    NaviHelper:syncDestShim(slot)
+    NaviHelper:invalidateRouteCaches()
+    log("map: point added at %.1f, %.1f (route now %d pts)", worldX, worldZ, #slot.route)
 end
 
 -- Mac: Option+M often sends unicode 0xB5 (µ) instead of KEY_M+modifier, so action binding never fires
@@ -337,6 +390,13 @@ local UNICODE_MAC_OPTION_M = 0xB5  -- µ (Option+M on many Mac layouts)
 local keyEventLogged = false
 
 function NaviHelper:keyEvent(unicode, sym, modifier, isDown)
+    -- Track Ctrl/Shift state as a fallback for the onClickMap handler (Input.isKeyPressed
+    -- can be unreliable inside that callback). Tracked on both down and up.
+    if Input ~= nil then
+        if sym == Input.KEY_lctrl or sym == Input.KEY_rctrl then NaviHelper.ctrlDown = isDown end
+        if sym == Input.KEY_lshift or sym == Input.KEY_rshift then NaviHelper.shiftDown = isDown end
+    end
+
     if not isDown then return end
     -- Only react when in vehicle (same as action events)
     if not g_currentMission or not g_currentMission.controlledVehicle then return end
@@ -582,6 +642,19 @@ end
 function NaviHelper:getEffectiveTarget(vehicle)
     vehicle = vehicle or (g_currentMission and g_currentMission.controlledVehicle)
     if vehicle == nil then return nil, nil, nil, nil, nil end
+
+    -- Priority 1: a manual map route always wins when set (this reverses the old
+    -- behaviour where AutoDrive was checked first). route[#route] is the destination.
+    do
+        local mkey = vehicleKey(vehicle)
+        local slot = mkey and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[mkey]
+        if slot and slot.route and #slot.route > 0 then
+            local dest = slot.route[#slot.route]
+            return dest.x, dest.z, slot.pathNodes, slot.currentPathIndex or 1, nil
+        end
+    end
+
+    -- Priority 2: AutoDrive destination (fallback when no manual route is set).
     if NaviHelperAD then
         local x, z, name
         -- Prefer selected destination (firstMarker from UI) so "Hof 1" etc. is used before route is started.
@@ -644,25 +717,56 @@ function NaviHelper:getEffectiveTarget(vehicle)
             return x, z, nil, nil, name
         end
     end
-    local key = vehicleKey(vehicle)
-    if key and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[key] then
-        local slot = NaviHelper.vehicleTargets[key]
-        if slot.targetX and slot.targetZ then
-            return slot.targetX, slot.targetZ, slot.pathNodes, slot.currentPathIndex, nil
-        end
-    end
     return nil, nil, nil, nil, nil
 end
 
--- Recompute route if dirty or vehicle drifted (only for our own target; AD path comes from vehicle).
--- Uses per-vehicle slot for manual target (vehicleTargets).
+-- Build a polyline through vehicle -> route waypoints -> destination.
+-- Hybrid: each segment is routed via AutoDrive roads when available, else a
+-- straight line. Segment ends are de-duplicated so the line is continuous.
+function NaviHelper:buildRoutePath(route, vx, vz)
+    if not route or #route == 0 then return nil end
+
+    -- Drive sequence: current vehicle position, then every route point in order.
+    local seq = { { x = vx, z = vz } }
+    for i = 1, #route do seq[#seq + 1] = { x = route[i].x, z = route[i].z } end
+
+    local nodes = {}
+    local adRouted, straightSegs = 0, 0
+    local function push(p)
+        local last = nodes[#nodes]
+        if last and math.abs(last.x - p.x) < 0.5 and math.abs(last.z - p.z) < 0.5 then return end
+        nodes[#nodes + 1] = p
+    end
+
+    for i = 1, #seq - 1 do
+        local a, b = seq[i], seq[i + 1]
+        local seg
+        if NaviHelperAD and NaviHelperAD.getPathFromToWorld then
+            local ok, path = pcall(NaviHelperAD.getPathFromToWorld, a.x, a.z, b.x, b.z)
+            if ok and path and #path > 0 then seg = path; adRouted = adRouted + 1 end
+        end
+        if seg then
+            for _, wp in ipairs(seg) do push({ x = wp.x, y = wp.y or 0, z = wp.z }) end
+        else
+            push({ x = a.x, y = 0, z = a.z })
+            push({ x = b.x, y = 0, z = b.z })
+            straightSegs = straightSegs + 1
+        end
+    end
+
+    log("Route built: %d nodes from %d segment(s) — %d AD-routed, %d straight",
+        #nodes, #seq - 1, adRouted, straightSegs)
+    return (#nodes > 0) and nodes or nil
+end
+
+-- Recompute the manual route polyline if dirty or the vehicle has drifted.
 function NaviHelper:updateRoute()
     local vehicle = g_currentMission and g_currentMission.controlledVehicle
     if not vehicle then return end
 
     local key = vehicleKey(vehicle)
     local slot = key and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[key]
-    if not slot or not slot.targetX or not slot.targetZ then return end
+    if not slot or not slot.route or #slot.route == 0 then return end
 
     local currentTime = g_currentMission and g_currentMission.time or 0
     if currentTime - NaviHelper.lastRouteUpdateTime < NaviHelper.routeUpdateInterval then
@@ -670,24 +774,12 @@ function NaviHelper:updateRoute()
     end
     NaviHelper.lastRouteUpdateTime = currentTime
 
-    local adX, adZ = NaviHelperAD and NaviHelperAD.getCurrentDestinationFromVehicle and NaviHelperAD.getCurrentDestinationFromVehicle(vehicle) or nil, nil
-    if adX and adZ then return end
-
     local vx, _, vz = self:getVehiclePosition(vehicle)
     if not vx or not vz then return end
 
     if NaviHelper.pathDirty then
-        slot.pathNodes = nil
-        if NaviHelperAD and NaviHelperAD.getPathFromToWorld then
-            local ok, path = pcall(NaviHelperAD.getPathFromToWorld, vx, vz, slot.targetX, slot.targetZ)
-            if ok and path and #path > 0 then
-                slot.pathNodes = path
-                slot.currentPathIndex = 1
-                log("Route planned: %d nodes (AD road routing)", #path)
-            else
-                log("Route: no AD path (ok=%s), straight-line fallback", tostring(ok))
-            end
-        end
+        slot.pathNodes = self:buildRoutePath(slot.route, vx, vz)
+        slot.currentPathIndex = 1
         NaviHelper.pathDirty = false
         slot.lastVehicleX = vx
         slot.lastVehicleZ = vz
