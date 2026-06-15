@@ -456,20 +456,32 @@ local function worldToMenuMapPos(wx, wz)
     return nil, nil
 end
 
--- Draw a dotted "breadcrumb" line between two screen points (no overlay rotation needed).
-local function drawMapBreadcrumb(overlayId, x1, y1, x2, y2, aspect)
-    local dx, dy = x2 - x1, y2 - y1
-    local distN = math.sqrt(dx * dx + dy * dy)
-    local spacing = 0.011
-    local count = math.floor(distN / spacing)
-    if count < 1 then return end
+-- Draw a dotted breadcrumb along a whole screen-space polyline. Arc-length stepping
+-- drops a dot every `spacing` regardless of node density, so it works both for a dense
+-- AD road path (many close nodes) and a sparse straight fallback (few far points).
+local function drawPolylineBreadcrumb(overlayId, pts, aspect)
+    if pts == nil or #pts == 0 then return end
+    local spacing = 0.009
     local w = 0.0045
     local h = w * aspect
-    setOverlayColor(overlayId, 0.27, 0.77, 0.37, 0.65)
-    for i = 1, count - 1 do
-        local t = i / count
-        local px, py = x1 + dx * t, y1 + dy * t
-        renderOverlay(overlayId, px - w * 0.5, py - h * 0.5, w, h)
+    setOverlayColor(overlayId, 0.27, 0.77, 0.37, 0.7)
+    local function dot(x, y) renderOverlay(overlayId, x - w * 0.5, y - h * 0.5, w, h) end
+    dot(pts[1][1], pts[1][2])
+    local acc = 0
+    for i = 1, #pts - 1 do
+        local x1, y1 = pts[i][1], pts[i][2]
+        local x2, y2 = pts[i + 1][1], pts[i + 1][2]
+        local sdx, sdy = x2 - x1, y2 - y1
+        local seglen = math.sqrt(sdx * sdx + sdy * sdy)
+        if seglen > 0 then
+            local pos = spacing - acc
+            while pos < seglen do
+                local t = pos / seglen
+                dot(x1 + sdx * t, y1 + sdy * t)
+                pos = pos + spacing
+            end
+            acc = (acc + seglen) % spacing
+        end
     end
 end
 
@@ -526,20 +538,25 @@ function NaviHelper._drawMenuMapInner()
     local aspect = g_screenAspectRatio or (16 / 9)
     local n = #slot.route
 
-    -- Route line: connect vehicle -> waypoints -> destination with a breadcrumb.
-    local seq = {}
-    local vx, _, vz = NaviHelper:getVehiclePosition(v)
-    if vx and vz then
-        local sx, sy = worldToMenuMapPos(vx, vz)
-        if sx then seq[#seq + 1] = { sx, sy } end
+    -- Route line: follow the actual computed path (road-routed via AutoDrive where the
+    -- AD network covers it), falling back to a straight vehicle->waypoints->dest line
+    -- when no path has been built yet.
+    local worldLine = {}
+    if slot.pathNodes ~= nil and #slot.pathNodes >= 2 then
+        for i = 1, #slot.pathNodes do
+            worldLine[#worldLine + 1] = { slot.pathNodes[i].x, slot.pathNodes[i].z }
+        end
+    else
+        local vx, _, vz = NaviHelper:getVehiclePosition(v)
+        if vx and vz then worldLine[#worldLine + 1] = { vx, vz } end
+        for i = 1, n do worldLine[#worldLine + 1] = { slot.route[i].x, slot.route[i].z } end
     end
-    for i = 1, n do
-        local sx, sy = worldToMenuMapPos(slot.route[i].x, slot.route[i].z)
-        if sx then seq[#seq + 1] = { sx, sy } end
+    local screenLine = {}
+    for i = 1, #worldLine do
+        local sx, sy = worldToMenuMapPos(worldLine[i][1], worldLine[i][2])
+        if sx then screenLine[#screenLine + 1] = { sx, sy } end
     end
-    for i = 1, #seq - 1 do
-        drawMapBreadcrumb(NaviHelper.dotOverlayId, seq[i][1], seq[i][2], seq[i + 1][1], seq[i + 1][2], aspect)
-    end
+    drawPolylineBreadcrumb(NaviHelper.dotOverlayId, screenLine, aspect)
 
     local converted = 0
     for i = 1, n do
