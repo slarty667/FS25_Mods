@@ -73,7 +73,13 @@ function NaviHelperVehicle:onRegisterActionEvents(_, isOnActiveVehicle)
     for i, actionName in ipairs(actionNames) do
         local actionId = getActionId(actionName)
         if actionId ~= nil then
-            InputBinding.registerActionEvent(g_inputBinding, actionId, self, callbacks[i], false, true, false, true)
+            local _, eventId = g_inputBinding:registerActionEvent(actionId, self, callbacks[i], false, true, false, true)
+            -- Critical: a registered action event stays INACTIVE until explicitly activated.
+            -- Without this the keys never fire (registered but dead) — Super Strength does the same.
+            if eventId then
+                g_inputBinding:setActionEventActive(eventId, true)
+                g_inputBinding:setActionEventTextVisibility(eventId, false)
+            end
             registered = registered + 1
         end
     end
