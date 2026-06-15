@@ -82,6 +82,14 @@ local function logDevError(fmt, ...)
     end
 end
 
+-- Localized text with a hard fallback (used for HUD strings; falls back if g_i18n is unavailable).
+local function tr(key, fallback)
+    if g_i18n and g_i18n.getText then
+        return g_i18n:getText(key)
+    end
+    return fallback
+end
+
 -- Stable key for per-vehicle storage (rootNode is entity id).
 -- Defined here (before first use) so onClearTarget/onSetTargetAhead/ingameMapMouseEvent can call it.
 local function vehicleKey(vehicle)
@@ -486,7 +494,7 @@ function NaviHelper:findNextTurn(path, pathIdx, vehicle)
                     end
 
                     if not isSustainedCurve then
-                        local direction = (crossZ > 0) and "rechts" or "links"
+                        local direction = (crossZ > 0) and tr("NAVIHELPER_DIR_RIGHT", "rechts") or tr("NAVIHELPER_DIR_LEFT", "links")
                         local turnPoint = b
                     if turnPoint and turnPoint.x and turnPoint.z then
                         -- Check if turn point is ahead of us (not behind).
@@ -881,13 +889,10 @@ end
 
 -- Draw the HUD text: destination name, next-turn instruction, total distance.
 function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath)
-    local function t(key, fallback)
-        return (g_i18n and g_i18n.getText and g_i18n:getText(key)) or fallback
-    end
     -- Turn instruction: distance to next turn; if going straight, only show when very close (like a real navi).
     local turnStr
     if turnDist and turnDir and turnDist < 5000 then
-        turnStr = string.format("%s %.0fm %s", t("NAVIHELPER_HUD_IN", "in"), turnDist, turnDir)
+        turnStr = string.format("%s %.0fm %s", tr("NAVIHELPER_HUD_IN", "in"), turnDist, turnDir)
     elseif effPath and #effPath > 2 and distTotal and distTotal < 50 then
         turnStr = string.format("%.0f m", distTotal)
     end
@@ -907,7 +912,7 @@ function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath)
         if turnStr then
             renderFn(cx, NaviHelper.hudCenterY + 0.02, 0.02, turnStr)
         end
-        renderFn(cx, NaviHelper.hudCenterY, 0.018, t("NAVIHELPER_HUD_TOTAL", "Total") .. ": " .. totalStr)
+        renderFn(cx, NaviHelper.hudCenterY, 0.018, tr("NAVIHELPER_HUD_TOTAL", "Total") .. ": " .. totalStr)
     end)
 end
 

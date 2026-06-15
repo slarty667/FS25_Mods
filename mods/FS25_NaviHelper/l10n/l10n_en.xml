@@ -5,4 +5,8 @@
 	<text name="input_NAVIHELPER_CLEAR_TARGET">NaviHelper: Clear target</text>
 	<text name="input_NAVIHELPER_SET_TARGET_AHEAD">NaviHelper: Set target ahead</text>
 	<text name="NAVIHELPER_MSG_DESTINATION_REACHED">Destination reached</text>
+	<text name="NAVIHELPER_DIR_LEFT">left</text>
+	<text name="NAVIHELPER_DIR_RIGHT">right</text>
+	<text name="NAVIHELPER_HUD_IN">in</text>
+	<text name="NAVIHELPER_HUD_TOTAL">Total</text>
 </l10n>

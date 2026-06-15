@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <modDesc descVersion="105">
-	<author>NaviHelper</author>
-	<version>1.0.0.0</version>
+	<author>Markus Uhl</author>
+	<version>1.1.0.0</version>
+	<multiplayer supported="false"/>
 	<iconFilename>storeItem.png</iconFilename>
 	<iconFilenameSmall>storeItem.png</iconFilenameSmall>
 	<title>
@@ -9,8 +10,8 @@
 		<de>NaviHelper</de>
 	</title>
 	<description>
-		<en>Manual driving navigation: turn-by-turn guidance using AutoDrive routes when available, or air-line arrow to destination. Set destination by map click.</en>
-		<de>Manuelle Fahrt-Navigation: Wegbeschreibung per AutoDrive-Routen wenn vorhanden, sonst Luftlinie zum Ziel. Ziel per Kartenklick setzen.</de>
+		<en>Manual driving navigation: shows destination name, next-turn instruction and total distance, plus a route line on the ground using AutoDrive routes when available. Set the destination in AutoDrive or by map click.</en>
+		<de>Manuelle Fahrt-Navigation: zeigt Zielname, Abbiegehinweis und Gesamtdistanz sowie eine Routenlinie am Boden (über AutoDrive-Routen, wenn vorhanden). Ziel in AutoDrive oder per Kartenklick setzen.</de>
 	</description>
 	<l10n filenamePrefix="l10n/l10n">
 		<text name="input_NAVIHELPER_TOGGLE_UI">
