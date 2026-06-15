@@ -427,15 +427,25 @@ local function worldToMenuMapPos(wx, wz)
     return nil, nil
 end
 
+-- Throttled diagnostic: log at most a few times so we can see why dots don't show
+-- without spamming (drawMenuMap runs every frame).
+local function mapDiag(fmt, ...)
+    NaviHelper._mapDiagCount = (NaviHelper._mapDiagCount or 0)
+    if NaviHelper._mapDiagCount >= 8 then return end
+    NaviHelper._mapDiagCount = NaviHelper._mapDiagCount + 1
+    log("drawMenuMap diag: " .. fmt, ...)
+end
+
 -- Appended to InGameMenu.draw: draw the route points as dots on the open map.
--- Destination (last point) green, intermediate waypoints orange.
+-- Destination (last point) green, intermediate waypoints orange. pcall-wrapped so
+-- a draw error can never take down the whole in-game menu.
 function NaviHelper.drawMenuMap()
+    local ok, err = pcall(NaviHelper._drawMenuMapInner)
+    if not ok then mapDiag("ERROR %s", tostring(err)) end
+end
+
+function NaviHelper._drawMenuMapInner()
     if g_inGameMenu == nil or not g_inGameMenu.isOpen then return end
-    -- Only on the map page (don't paint dots over garage/controls/etc.).
-    local mapPage = g_inGameMenu.pageMapOverview or g_inGameMenu.pageMap
-    if mapPage ~= nil and g_inGameMenu.currentPage ~= nil and g_inGameMenu.currentPage ~= mapPage then
-        return
-    end
 
     local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
         or (g_currentMission and g_currentMission.controlledVehicle)
@@ -444,26 +454,43 @@ function NaviHelper.drawMenuMap()
     local slot = key and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[key]
     if not slot or not slot.route or #slot.route == 0 then return end
 
+    -- Overlay (lazy create). Report the path/id once so we know if the asset loaded.
     if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
         NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
+        mapDiag("created overlay id=%s from %s", tostring(NaviHelper.dotOverlayId),
+            tostring(NaviHelper.modDirectory) .. "textures/dot.png")
     end
-    if NaviHelper.dotOverlayId == nil then return end
+    if NaviHelper.dotOverlayId == nil then
+        mapDiag("no overlay (modDir=%s createImageOverlay=%s)",
+            tostring(NaviHelper.modDirectory), tostring(createImageOverlay ~= nil))
+        return
+    end
+
+    -- Map element + offsets present?
+    local map = menuMapElement()
+    if map ~= nil then
+        mapDiag("map el ok: offX=%s sizeX=%s layout=%s fsLayout=%s",
+            tostring(map.worldCenterOffsetX), tostring(map.worldSizeX),
+            tostring(map.layout ~= nil), tostring(map.fullScreenLayout ~= nil))
+    else
+        mapDiag("no map element (baseIngameMap/ingameMap nil)")
+    end
 
     local aspect = g_screenAspectRatio or (16 / 9)
     local n = #slot.route
+    local converted = 0
     for i = 1, n do
         local p = slot.route[i]
         local sx, sy = worldToMenuMapPos(p.x, p.z)
         if sx ~= nil then
+            converted = converted + 1
             local isDest = (i == n)
             local w = isDest and 0.013 or 0.010
             local h = w * aspect
-            -- dark halo for contrast
             local ow = w + 0.004
             local oh = ow * aspect
             setOverlayColor(NaviHelper.dotOverlayId, 0, 0, 0, 0.9)
             renderOverlay(NaviHelper.dotOverlayId, sx - ow * 0.5, sy - oh * 0.5, ow, oh)
-            -- colored dot
             if isDest then
                 setOverlayColor(NaviHelper.dotOverlayId, 0.27, 0.77, 0.37, 1)
             else
@@ -473,6 +500,8 @@ function NaviHelper.drawMenuMap()
         end
     end
     setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, 1)
+    mapDiag("rendered %d/%d points (first world=%.1f,%.1f)", converted, n,
+        slot.route[1].x, slot.route[1].z)
 end
 
 -- Mac: Option+M often sends unicode 0xB5 (µ) instead of KEY_M+modifier, so action binding never fires
