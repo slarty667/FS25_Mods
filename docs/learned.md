@@ -43,10 +43,15 @@ Tips, references, and lessons from FS25 mod development (e.g. FS25_NaviHelper).
 - **Spike mod:** `mods/FS25_ControlsSearch`. When in game, open Options → Controls and press **F**. Check `log.txt` for `[ControlsSearch]` lines: spike dumps `g_gui` keys (to detect controls screen) and `g_inputBinding` structure (e.g. `nameActions`).
 - **Add findings here after a run:** e.g. how to detect "controls screen" (which `g_gui` field or screen name), and how to iterate all actions/bindings (tables, method names). Use Logging.info for dump; file writes from game Lua may not land in project dir.
 
-## Mouse Steering (FS25_MouseSteering_MiddleClick)
+## Mouse Steering (FS25_HoldToSteer)
 
 - **Look vs. steering:** Unterdrücke Kamera/Mirror nur bei `armed AND active` (LMB gehalten). Bei `armed` allein: Maus (ohne LMB) muss weiterhin den Look links/rechts steuern. Unterdrückung nur auf `armed` blockiert den Umblick komplett.
 - **Kurvenblick + Coast:** Zusätzliches Kamera-`rotY` nach `VehicleCamera:update`; aktiv während `active` oder `_steeringCoast`, solange nicht Frontlader-Zweig selektiert (s.u.). Coast: nach LMB-Loslassen exponentieller Zerfall von `steeringValue`, gekoppelt an Spiel-Lenkrückstellung (`GameSettings`-Namen per Kandidatenliste + Fallback-Prozent).
+- **Hold To Steer — Fahrspur + HUD:** Projektion läuft in `SteeringPathIndicator:update` (nicht in `draw()`), daher unabhängig von `register.lua`-HUD-Gate. `pathFollowGameHud` (Default an): bei `g_noHudModeEnabled` oder Menü/HUD aus → `shouldRender` false + `hideAll`. Farbe/Länge über Settings → `PathGeometry.computePath(..., minLengthM, maxLengthM)`.
+- **Mod-Einstellungen UI (UIHelper):** General Settings klont nur Bool (`checkWoodHarvesterAutoCutBox`), Range und Choice (`multiVolumeVoiceBox`) — **kein Color-Picker**. Farbwahl für Mods: Preset-Choice wie `pathIndicatorMode`, nicht RGB-Slider.
+- **Kurvenblick nur Innenkamera:** `afterVehicleCameraUpdate` früh abbrechen wenn `camera.isInside ~= true` (und `isPassengerCamera`). Außen-/Chase-Kameras haben anderes `origRotY` — Anchor/Coast dort zieht nach LMB los oft „nach hinten“ statt zur erwarteten Vorwärts-Null.
+- **Kurvenblick Richtung (Stop&Go):** Für Kamera-Flip/Coast nicht frameweise `getMotion().isReverse` nutzen — `movingDirection` flackert bei Stillstand/Kriechgang. Stattdessen `MouseSteering:updateHeadTurnReverseStable` (Dead Zone bei `movingDirection == 0`, ~280 ms Debounce beim Wechsel). Pfad/HUD weiter mit `getMotion` (roh).
+- **Kurvenblick + LMB los:** Vorwärts: **kein** `clearSteeringHeadTurn()` beim LMB-Up — Coast nutzt `origRotY`-Anchor + abklingendes `new` (langsamer Schwenk). Rückwärts: einmal `clearSteeringHeadTurn()` beim LMB-Up, Coast schreibt **kein** `rotY` (freier Umblick). Sofortiges Peel bei jedem LMB-Up erzeugt Vorwärts-Sprung zur Mitte.
 - **Frontlader vs. Maus:** Kein globales Auto-Disarm mehr. Teilbaum per **Joint-Typ** am Root (`attacherJoints` → Typname enthält `frontloader`) per DFS plus **Union** mit `getAttachedImplementsInfo().frontLoaders` (JD / Sonder-XML). Selektion: `getSelectedVehicle()` und zusätzlich `getSelectedImplement()` — wenn deren `.object` im Teilbaum: Mod-Maus pausieren.
 - **Frontloader hydraulics vs. LMB steering (cab focus):** Use **two layers**. (1) Keep zeroing axis-like keys in `spec_*`.`lastInputValues` on objects in the frontloader hardware subtree (`VehicleIntrospection:zeroMouseHydraulicAxesOnFrontloaderHardware`), called from vehicle `onPostUpdate` and mission `draw`. That path alone was **not sufficient** in FS25 — some fork/arm motion still followed mouse steering because vanilla feeds **bound action callbacks**, not only those tables. (2) Additionally, each frame while LMB steering should suppress loader input, **`MouseSteeringVehicle:onPostUpdate`** wraps the vanilla handlers for **`AXIS_FRONTLOADER_ARM`**, **`AXIS_FRONTLOADER_TOOL`**, and **`AXIS_FRONTLOADER_TOOL2`** inside `g_inputBinding.actionEvents`: include rows whose `targetObject` is the controlled vehicle **or** any implement/table whose `rootVehicle` or `getRootVehicle()` equals that vehicle (tractor rows alone miss `attachableFrontloader` / `implementDynamicMountAttacher` targets). Suppress only when `armed` ∧ `active` ∧ no frontloader-branch selection ∧ not LMB+RMB free-look (`MouseSteering._otherMouseButtonDown`).
 - **InputBinding replaces callbacks after implement selection changes:** After cycling tractor ↔ trailer ↔ loader ↔ fork, the engine may **replace `ev.callback`** on existing action-event rows. A permanent “already wrapped” dedupe keyed only by event identity **without** checking the current function pointer lets suppression silently stop. Pattern that works: mark **only** your wrapper functions in a **weak-key** table (`setmetatable({}, { __mode = "k" })`); before wrapping, if `ev.callback` is not marked, wrap the **current** function again (see mod: `_flWrapMarkers` on `MouseSteeringVehicle`).
@@ -78,6 +83,8 @@ Belegte Praxis in zwei unabhängigen FS25-Mods: **FS25_ContractBoost** (mit `scr
 - **Specs sind Metatable-vererbt, NICHT via `pairs()` sichtbar:** Ein `pairs(vehicle)` listet nur Instance-Level-Attribute. Die `spec_wheels` / `spec_attachable` / `spec_attacherJoints` etc. existieren, werden aber über Lua-Metatable an der Instanz angeboten. Richtig: direkte Probe mit `vehicle.spec_wheels` statt Iteration. Für Discovery: Liste bekannter Spec-Namen durchprobieren.
 - **getTerrainHeightAtWorldPos-Signatur ist 4-Arg:** `getTerrainHeightAtWorldPos(terrainNode, x, y, z)` — der `y`-Parameter ist Input-Placeholder und wird für die Höhenabfrage ignoriert. 3-Arg-Aufruf (ohne y) führt zu `Function called with invalid number of arguments. 3 instead of 4` bei JEDEM Frame. Als terrainNode funktioniert `g_terrainNode` (canonical) oder `g_currentMission.terrainRootNode`.
 - **Vehicle-Local +X zeigt nach LINKS (Giants-Engine-Konvention):** Intuitiv würde man meinen +X = rechts des Fahrzeugs, aber die Vehicle-rootNodes in FS25 orientieren +X nach links. Beim Transform von vehicle-lokalen Pfadpunkten ins Weltframe via `localToWorld` muss X negiert werden, damit Rechtslenkung den Pfad nach rechts zeichnet.
+- **Hold To Steer — Lenkrückstellung nach LMB:** Mit „Lenkrückstellung aus Spiel“ an (Default) darf die Mod nach LMB-Loslassen **kein** `axisSteer` mehr schreiben; das Spiel zentriert über `rotatedTime` wie bei Tastatur. Eigene exponentielle Coast-Kurve war spürbar schneller als Vanilla. HUD/Pfad/Kamera: `steeringValue` aus `readSteeringTakeoverNormalized` / `rotatedTime` bis Mitte. Log: `[MouseSteering] steering-return GameSettings candidates` beim Map-Load.
+- **Hold To Steer — Analog-Marker MÜSSEN beim LMB-Loslassen zurückgesetzt werden (sonst Sofort-Snap zur Mitte):** Während LMB gehalten wird, markiert der Mod die Lenkachse als analog/Lenkrad (`lastInputValues.axisSteerIsAnalog = true`, `axisSteerDeviceCategory = WHEEL`), damit das Rad 1:1 der Maus folgt (Positions-Steuerung). FS behandelt eine **analoge** Achse positionsbasiert: Wert 0 → Rad sofort mittig. Eine **digitale** Achse (Tastatur) ist Rate-basiert → `rotatedTime` läuft mit eingestellter Rückstellgeschwindigkeit langsam zur Mitte. Symptom des Bugs: Maus-Lenkung springt beim Loslassen sofort auf Mitte, Tastatur dekayed langsam. „Nach Loslassen kein `axisSteer` schreiben“ allein reicht NICHT — die Marker bleiben sonst stehen und die Engine zentriert weiter analog/instant. **Fix:** beim LMB-Up (Vanilla-Rückstell-Modus) `axisSteerIsAnalog=false` + `axisSteerDeviceCategory=nil` setzen, und während des Coasts gesetzt halten. Nur im `_steeringCoast`/LMB-Up-Pfad löschen (nicht global jeden Frame), sonst bricht's echte Lenkrad-Nutzer.
 - **Lenkeinschlag-Quelle je Input-Typ:** `vehicle.spec_drivable.lastInputValues.axisSteer` wird nur gefüllt, wenn unser eigener Mauslenk-Code reinschreibt. Bei Tastatur-A/D, Controller und Lenkrad läuft der Wert über einen anderen Pipeline-Pfad. Robust: `vehicle.rotatedTime / vehicle.rotatedTimeMax` — das ist der physische Rad-Winkel nach vollständiger Input-Verarbeitung, normalisiert auf [-1, 1]. Funktioniert für alle Input-Quellen. Fallback-Kaskade: rotatedTime → spec_drivable.axisSide → lastInputValues.axisSteer.
 - **Max-Speed für Fahrzeug-spezifische Skalierungen:** Kandidaten in Reihenfolge: `vehicle:getCruiseControlMaxSpeed()` (km/h), `spec_motorized.motor.maxForwardSpeed` (m/s → *3.6), `spec_drivable.cruiseControl.maxSpeed` (km/h). Default 40 km/h (Mid-size Tractor), clamped auf 10–300. Relativ-Skalierung ist immer besser als absolute Konstanten — ein 40-km/h-Traktor bei Vollgas soll dasselbe relative Verhalten bekommen wie ein 80-km/h-LKW bei Vollgas.
 
@@ -151,3 +158,61 @@ Aus der Iteration mit dem Mauslenk-Mod, relevant für ähnliche "Eingabemodus-mi
 - **Maus-Rate als Offset-vom-Zentrum, nicht als Delta:** FS25 zentriert den Cursor in relative-mouse-mode (während LMB gehalten) auf 0.5 zurück. `posX - 0.5` ist also kein "delta seit letztem Frame", sondern "wie weit will der Spieler die Lenkung gerade ziehen". Das ist ein RATE-Modell, nicht ein DELTA-Modell. Konsequenz: bei losgelassener Maus-Auslenkung läuft die Lenkung nicht zurück — sie bleibt stehen, bis der Spieler aktiv in die andere Richtung zieht. Das ist erwünscht (echte Lenkrad-Haptik) und macht den Algorithmus robust gegen Frame-Drops.
 - **Frontlader + Maus:** Globales „FL montiert → immer aus“ vermeiden; stattdessen selektionsbasiert pausieren (s.o.), damit Anhänger/Zugmaschine weiter mit Mauslenkung bedienbar sind. Ctrl+M / MMB schaltet weiterhin die ganze Mod-Funktion scharf/aus.
 - **Auto-Disarm bei Vehicle-Leave:** `MouseSteering:onControlledVehicleChanged(nil)` muss explizit gerufen werden, sobald `vehicle:getIsControlled()` false wird. Das Vanilla-Signal (`controlledVehicle = nil`) wird nicht automatisch propagiert. Ohne diesen Call bleibt `armed=true` hängen, und beim nächsten Einsteigen ist der State falsch.
+
+## Mod-Set-Management / Mods-Ordner (fsmods)
+
+- **FS25 lädt KEINE symlinkten Zips.** Ein Symlink namens `FS25_X.zip` -> Library-Zip wird von FS als entpackter Ordner behandelt: es sucht `mods/FS25_X/modDesc.xml` und scheitert (`Error: Failed to open xml file ...`). Der Mod lädt still nicht. Belegt im Spiel-Log: bei 108 symlinkten Zips wurden nur 3 (echte Ordner-Mods) geladen.
+- **Lösung: Zips per Hardlink** in den aktiven Ordner (gleiche APFS-Volume, instant, kein Extra-Speicher) — Hardlink ist von echter Datei ununterscheidbar, FS öffnet ihn als normales Zip. **Ordner-Mods** (Dev-Mods) funktionieren als **Symlink** problemlos (FS folgt Verzeichnis-Symlinks).
+- **FS scannt den Mods-Ordner nur beim Start.** Nach Mod-Wechsel FS komplett neu starten, sonst hängt es an der alten Mod-Liste.
+- **Aktive Mods pro Save** stehen in `<savegame>/careerSavegame.xml` als `<mod modName/title/version/required/fileHash>`. Save-Vorschaubild wird NICHT im Save-Ordner gespeichert (kein overview.png); Mod-Map-Saves zeigen ein Warndreieck statt Vorschau, wenn ihr Map-Mod nicht aktiv ist — Basis-Maps (Zielonka, Riverbend Springs, Hutan Pantai) zeigen immer Vorschau.
+- **fileHash in careerSavegame.xml ist KEIN simpler MD5 der Zip** (mehrere Mods getestet, alle mismatch). Für einen careerSavegame.xml-Injektor (neue Funktionsmod ohne Klick in alle Saves) müsste der Hash erst reverse-engineered werden; Fallback: Eintrag mit required="false", FS fragt 1x beim Laden.
+- **DLC** erscheint als `pdlc_*` in der Mod-Liste, gehört aber nicht in den Mods-Ordner (vom Spiel/Launcher verwaltet).
+- Tool: `~/Dropbox/htdocs/FS25_Mods/tools/fsmods/` (löst `find_unused_mods.py` mit `fsmods doctor` ab).
+
+## Hold To Steer — Hinterradlenkung / Lenkachse (rear-wheel & 4WS)
+
+- **Problem:** Pfad-Projektion zeigte bei Hinterachs-gelenkten Fahrzeugen (Drescher) eine andere Kurve als die tatsächliche Fahrlinie. Ursache: `PathGeometry.computePath` verankerte den Wendekreis hart auf der Senkrechten durch den Fahrzeug-Ursprung (≈ Hinterachse) — reines Vorderachs-Ackermann.
+- **Fix:** `computePath` bekam `fixedAxleZ` (Z der NICHT lenkenden/rollenden Achse, an der der Momentanpol liegt) und `steerInvert`. Front-steer: `fixedAxleZ=0` (unverändert). Rear-steer: `fixedAxleZ=wheelbase` (Wendekreis an der Vorderachse) + `steerInvert=true` (Karosserie giert gegensinnig zum Lenkwert). 4WS: `fixedAxleZ=wheelbase/2` (Pivot mittig, Näherung). Reduziert bei `fixedAxleZ=0` exakt aufs alte Verhalten.
+- **Erkennung:** `VehicleIntrospection.inferSteerModeFromWheels` klassifiziert über Rad-`positionZ` + Lenk-Limit (`rotMax`/`maxRot`/`steeringAngle` > 0.05): lenkende Räder hinten (min Z) -> "rear", vorne (max Z) -> "front", beide -> "all" (4WS). FS-Frame: +Z = vorne. `getGeometry` liefert jetzt `steerMode`, `fixedAxleZ`, `steerInvert`; der One-shot-Log zeigt `steerMode`/`fixedAxleZ` zur Verifikation.
+- **Tests:** `tests/test_path_geometry.lua` (engine-frei, desk-runnable; mangels lokalem Lua via `lupa`/Lua 5.5 ausgeführt). Deckt front-steer-Regression, rear-steer-Pivot+Vorzeichen, 4WS, Geradeaus ab.
+- **Offen:** Vorzeichen (`steerInvert`) und Heck-Ausschwenk (eigene Heck-Linie analog Trailer-Kinematik) im Spiel am Drescher gegenprüfen; ggf. `steerInvert` kippen falls Kurve falschrum.
+
+## Hold To Steer — Projektion beim Rückwärtsfahren (Karte #147) — 2026-06-01
+
+- **Idee:** Ein Vorderradlenker zeigt rückwärts die **Hinterachs**-Spur (das ist die Achse, die beim Rangieren der Linie folgt — hilft beim Ranfahren an die Dreipunkt-Kupplung). Ein Drescher (Hinterachslenker) rückwärts entsprechend die **Vorderachs**-Spur. Allgemein: beim Rückwärtsfahren ist die *gelenkte* Achse vorn (in Fahrtrichtung), der Pivot bleibt an der *fixen* Achse.
+- **Bug 1 — Pivot gespiegelt an z=0:** Der Reverse-Flip war `pz = zDir * cz_point`, spiegelte den Bogen also an `z=0` statt an der Pivot-Reihe `z=fixedAxleZ`. Für `fixedAxleZ=0` (Front-steer) unsichtbar, aber für den Drescher (`fixedAxleZ=wheelbase`) sprang der Wendekreis-Mittelpunkt auf die falsche Seite (`-wheelbase`). **Fix:** `pz = fixedAxleZ + zDir * arcZ` (`arcZ = radius*sinT`). Es wird nur der Bogen gespiegelt, der Kreismittelpunkt bleibt `(sign*R, fixedAxleZ)` in beide Richtungen.
+- **Bug 2 — Start-Offset falsches Vorzeichen:** Die Bogenlänge wird von der fixen Achse gemessen. Vorwärts startet sie an der Nase (`startDist - fixedAxleZ`), rückwärts am Heck nach hinten (`startDist + fixedAxleZ`) — der `fixedAxleZ`-Term flippt also mit der Richtung: `s = startDist - zDir*fixedAxleZ`. Ohne das startete die Drescher-Reverse-Spur auf der falschen Seite des Pivots.
+- **Regression:** Beide Fixes lassen `fixedAxleZ=0` (alle Front-steer) und Drescher-**vorwärts** exakt unverändert; nur Reverse mit `fixedAxleZ≠0` ändert sich. Test 2 (reproduziert die Original-Formel) bleibt grün.
+- **Tests:** `tests/test_path_geometry.lua` Blöcke [7] (Front-steer reverse) + [8] (Rear-steer reverse, Karte #147) — prüfen Kreismittelpunkt (Seite + Z), das alte Bug-Signal (Pivot NICHT bei `-wheelbase`) und dass die Spur am nahen Ende hinter dem Pivot startet. 8 Blöcke, 0 Failures via `lupa`.
+- **Caveat:** Der Trailer-Hitch-Pfad in `SteeringPathIndicator` reicht `fixedAxleZ`/`steerInvert` (noch) nicht durch — irrelevant, weil ziehende Fahrzeuge Traktoren (Front-steer, `fixedAxleZ=0`) sind. Nur falls je ein Hinterachslenker einen Hänger rückwärts schiebt, müsste das nachgezogen werden.
+- **Offen:** In-Game-Check — Traktor rückwärts an Maschine (Spur an Hinterachse), Drescher rückwärts (Spur an Vorderachse).
+
+## FS25 Internet-Radio (eigene Sender) — 2026-06-01
+
+- **DER Knackpunkt: Speicherort.** FS liest die Sender NUR aus
+  `~/Library/Application Support/FarmingSimulator2025/music/streamingInternetRadios.xml`
+  (Unterordner `music/`, neben `ReadmeMusic.txt`). Die Datei im **Profil-Stamm** wird
+  komplett ignoriert. Stundenlanger Debug-Marathon ging genau darauf zurück.
+- **Format:** `<streamingInternetRadio href="URL" name="Anzeige"/>` in
+  `<streamingInternetRadios>`. XML-Header (`<?xml …?>`) voranstellen. XML-Kommentare
+  (`<!-- -->`) ignoriert FS.
+- **URL muss ein DIREKTER Audio-Stream sein** (mp3/aac/m3u/pls oder direkter Mount).
+  FS-Fehler im `log.txt`:
+  - `InternetRadio content error: unexpected content-type text/html` = URL liefert HTML
+    (Landing/Redirect/Cloudflare-Seite).
+  - `InternetRadio connect error: unexpected response code` = 404 / falscher Mount / Redirect.
+  - `Change radio stream to: <url>` = Sender ist im Cycle (geladen). Tauchen eigene
+    URLs hier auf → Datei wird gelesen.
+- **Was funktioniert: laut.fm.** Format `https://<station>.stream.laut.fm/<station>`
+  (im Spiel-Log als laufend belegt, z.B. eingebauter `simliveradio…`). Die exakte
+  Stream-URL pro Sender liefert die **laut.fm-API**: `https://api.laut.fm/station/<name>`
+  → Feld `stream_url`. Verifiziert & laufend: **MetalBlast FM** (`metalblastfm`,
+  Death/Black/Thrash/Grind), **Grindoteka** (`grindoteka`, Grindcore).
+- **Was NICHT geht:** SomaFM (`ice.somafm.com/...`, `somafm.com/*.pls`) → `unexpected
+  response code`, vermutlich Cloudflare-Block gegen FS' HTTP-Client. RauteMusik hat auf
+  `rautemusik.stream12.radiohost.de` nur club/main/charthits/country (kein `/metal`).
+  „metal-only" ist kein laut.fm-Sender (anderer Hoster).
+- **Lokale Files** (MP3/FLAC in `music/` oder Symlink) spielen als lokales „Radio" —
+  bei Markus nicht nutzbar (kein lokales Archiv, Spotify).
+- **Mehr Sender hinzufügen ist jetzt trivial:** laut.fm-Sendernamen raussuchen,
+  `api.laut.fm/station/<name>` → `stream_url`, als Zeile in die music/-Datei. Beliebig viele.

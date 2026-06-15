@@ -22,7 +22,7 @@ SOFTWARE.
 
 ---
 
-Notice: this repository bundles `mods/FS25_MouseSteering_MiddleClick/scripts/lib/UIHelper.lua`
+Notice: this repository bundles `mods/FS25_HoldToSteer/scripts/lib/UIHelper.lua`
 by Farmsim Tim (based on discoveries by Shad0wlife). That file retains its
 original attribution header; please leave the first three lines of UIHelper.lua
 unchanged as per its licence.

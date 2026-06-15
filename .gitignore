@@ -19,3 +19,20 @@ log.txt
 *~
 .idea/
 .vscode/
+
+# Backup artefacts (created by tooling/agents; not versioned)
+*.bak
+*.bak_*
+*.bak-*
+*.ad-backup
+
+# Generated reports (regenerate via tmp/mod_audit.py)
+savegame_mod_audit.html
+
+# Python virtualenvs (per-project convention) + bytecode
+.venv/
+__pycache__/
+*.pyc
+
+# fsmods runtime state (per-machine, not versioned)
+.fsmods_state.json
