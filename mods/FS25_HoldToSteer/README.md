@@ -1,4 +1,4 @@
-# Mouse Steering (Middle-Click) — FS25
+# Hold To Steer — FS25
 
 Realistic mouse steering for Farming Simulator 25 with live reverse-camera-style
 path projection, trailer swing prediction, and vehicle-aware sensitivity.
@@ -15,7 +15,11 @@ path projection, trailer swing prediction, and vehicle-aware sensitivity.
   grab the mouse mid-turn or after keyboard steering.
 - **Optional “look into the corner”:** while LMB steering (and briefly during
   the return phase), the cabin camera can yaw slightly with steering; reverse
-  travel flips the feel. Configure under **Mouse Steering** in General settings.
+  travel flips the feel (debounced at crawl speed to avoid Stop&Go flutter).
+  While **reversing**, releasing LMB removes the steering-linked yaw overlay and
+  the mod stops touching camera yaw during coast — use the mouse to look around
+  (e.g. glance forward while still rolling backward). Forward coast still eases
+  toward the interior default. Configure under **Hold To Steer** in General settings.
 - **Projected driving path:** two green ground lines show where the outer
   edges of the vehicle will go, based on the current steering angle. Works
   for mouse, keyboard, controller and wheel inputs.
@@ -71,17 +75,20 @@ All options are in **Options → General** under the **Mouse Steering** group.
 | Output deadzone | 0.02 | 0.00 – 0.20 | Steering values below this clamp to zero (prevents wheel jitter) |
 | Mouse deadzone | 0.003 | 0.00 – 0.05 | Mouse movement below this is ignored |
 | Steering bar HUD | On | toggle | Bar while LMB steering or during the short return-to-centre after release |
-| Driving path projection | On-steering | Off / On-steering / Mouse-only / Always | When the green ground lines are visible (Mouse-only includes post-LMB coast) |
+| Driving path projection | On-steering | Off / On-steering / Mouse-only / Always | When the ground path lines are visible (Mouse-only includes post-LMB coast) |
+| Path follows game HUD | On | toggle | Hide path when HUD is hidden (` key); steering bar already does this |
+| Path colour | Green | preset list | Green, Cyan, Magenta, Orange, Yellow, Blue, Bright (no RGB sliders) |
+| Path length (slow / fast) | 10 / 40 m | 2–60 / 5–120 m | Arc length at low speed and at vehicle top speed |
 | Trailer path (reverse) | On | toggle | Yellow line showing trailer swing while reversing |
 | Look into corner (camera) | On | toggle | Extra cabin yaw with steering; LMB+RMB still allows free look |
 | Corner look — max angle | 85° | 10–110° | Cap for camera yaw at full steer |
 | Corner look — response | 14 | 4–35 | How fast the camera follows / relaxes |
 | Invert corner look | Off | toggle | Flip direction if a vehicle or camera mod feels wrong |
-| Use game steering return | On | toggle | After LMB up, match game steering-return speed when the API exposes it |
-| Steering return (fallback %) | 80 | 5–200 | Faster recentre when the game value is unavailable or the toggle is off |
+| Use game steering return | On | toggle | On: after LMB up, vanilla wheel return (same as keyboard). Off: mod decay via fallback % |
+| Steering return (mod fallback %) | 80 | 5–200 | Only when the toggle above is off |
 
 Settings persist globally per user profile in
-`modSettings/FS25_MouseSteering_MiddleClick.xml`.
+`modSettings/FS25_HoldToSteer.xml`.
 
 ## Compatibility
 

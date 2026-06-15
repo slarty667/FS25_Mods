@@ -16,7 +16,8 @@
 PathGeometry = {}
 
 -- Tunable constants (intentionally not exposed as user settings).
-local DEFAULT_NUM_SAMPLES   = 20
+local DEFAULT_NUM_SAMPLES   = 80        -- short segments: each flat tile spans little ground, so the
+                                        -- chord can't sink far under a convex bump/slope (no per-segment pitch)
 local DEFAULT_MIN_LENGTH_M  = 10.0        -- at 0 km/h relative speed; anything shorter is visually lost in perspective
 local DEFAULT_MAX_LENGTH_M  = 40.0        -- at 100 % of vehicle top speed
 local FALLBACK_MAX_SPEED_KMH = 40.0       -- used when vehicle max speed is unknown (mid-size tractor)
@@ -28,13 +29,21 @@ local STEER_EPSILON         = 1e-4
 ---length always feels proportional to "how fast am I going for this vehicle".
 ---@param speedKmh number current speed (km/h)
 ---@param maxSpeedKmh number|nil vehicle top speed (km/h); falls back to 40 km/h
+---@param minLengthM number|nil metres at standstill / low speed (default 10)
+---@param maxLengthM number|nil metres at full vehicle top speed (default 40)
 ---@return number length in meters
-function PathGeometry.computeLength(speedKmh, maxSpeedKmh)
+function PathGeometry.computeLength(speedKmh, maxSpeedKmh, minLengthM, maxLengthM)
+    local minL = minLengthM or DEFAULT_MIN_LENGTH_M
+    local maxL = maxLengthM or DEFAULT_MAX_LENGTH_M
+    if minL < 2 then minL = 2 end
+    if maxL < minL + 2 then maxL = minL + 2 end
+    if maxL > 120 then maxL = 120 end
+
     local s = math.abs(speedKmh or 0)
     local maxS = maxSpeedKmh or FALLBACK_MAX_SPEED_KMH
     if maxS < 10 then maxS = FALLBACK_MAX_SPEED_KMH end  -- sanity clamp
     local ratio = math.min(1, s / maxS)
-    return DEFAULT_MIN_LENGTH_M + ratio * (DEFAULT_MAX_LENGTH_M - DEFAULT_MIN_LENGTH_M)
+    return minL + ratio * (maxL - minL)
 end
 
 ---Compute the turning radius from Ackermann geometry.
@@ -63,12 +72,24 @@ end
 ---@param isReverse boolean if true, the path projects behind the vehicle
 ---@param startDist number|nil arc-length offset where samples begin (e.g. vehicle nose z); default 0
 ---@param numSamples number|nil optional override (default 20)
+---@param minLengthM number|nil see computeLength
+---@param maxLengthM number|nil see computeLength
+---@param fixedAxleZ number|nil z of the NON-steered (rolling) axle the turn circle is
+---  anchored to, in the same frame where the rear axle ~ 0. Front-wheel steering: 0
+---  (default, behaviour unchanged). Rear-wheel steering (combines): the front axle,
+---  i.e. wheelbase. 4WS: roughly the centre, wheelbase/2.
+---@param steerInvert boolean|nil if true (rear-wheel steering) the body yaws the
+---  opposite way for the same steering value, so the input sign is flipped.
 ---@return table leftPoints array of {x=..., z=...}
 ---@return table rightPoints array of {x=..., z=...}
-function PathGeometry.computePath(steeringValue, speedKmh, maxSpeedKmh, wheelbase, trackWidth, maxSteerAngle, isReverse, startDist, numSamples)
+function PathGeometry.computePath(steeringValue, speedKmh, maxSpeedKmh, wheelbase, trackWidth, maxSteerAngle, isReverse, startDist, numSamples, minLengthM, maxLengthM, fixedAxleZ, steerInvert)
     numSamples = numSamples or DEFAULT_NUM_SAMPLES
     startDist = startDist or 0  -- distance from vehicle origin to start the path (nose or tail)
-    local length = PathGeometry.computeLength(speedKmh, maxSpeedKmh)
+    fixedAxleZ = fixedAxleZ or 0  -- 0 = front-wheel steering (turn circle on the rear axle)
+    if steerInvert then
+        steeringValue = -(steeringValue or 0)  -- rear-steer yaws the other way for the same input
+    end
+    local length = PathGeometry.computeLength(speedKmh, maxSpeedKmh, minLengthM, maxLengthM)
     local halfTrack = (trackWidth or 1.8) * 0.5
     local zDir = isReverse and -1 or 1
 
@@ -88,30 +109,39 @@ function PathGeometry.computePath(steeringValue, speedKmh, maxSpeedKmh, wheelbas
         return leftPoints, rightPoints
     end
 
-    -- Curved path: circle centered at (sign * radius, 0). Arc-length parameter s
-    -- runs from startDist (at vehicle nose/tail) to startDist + length.
-    -- The arc itself is still anchored at the vehicle's rotation centre — that's
-    -- physically correct: the turning circle doesn't move when we just skip the
-    -- first few metres of drawing.
+    -- Curved path: circle centered at (sign * radius, fixedAxleZ). The instantaneous
+    -- centre of rotation lies on the perpendicular through the NON-steered (rolling)
+    -- axle. Front-wheel steering anchors it at the rear axle (fixedAxleZ = 0, the
+    -- original behaviour); rear-wheel steering anchors it at the FRONT axle
+    -- (fixedAxleZ = wheelbase), which is why a combine's body swings the other way.
+    -- Arc-length is measured from that fixed axle, so we offset the start by it.
     local cx = sign * radius
 
     for i = 0, numSamples do
-        local s = startDist + length * (i / numSamples)
+        -- Arc-length from the fixed (pivot) axle to the drawing-start end, measured in
+        -- the travel direction: forward starts at the nose (startDist - fixedAxleZ),
+        -- reverse starts at the tail going backward (startDist + fixedAxleZ). The
+        -- fixedAxleZ term therefore flips sign with direction. (Card #147.)
+        local s = (startDist - zDir * fixedAxleZ) + length * (i / numSamples)
         local theta = s / radius
 
         local cosT = math.cos(theta)
         local sinT = math.sin(theta)
 
         local cx_point = cx - sign * radius * cosT
-        local cz_point = radius * sinT
+        local arcZ = radius * sinT  -- z-offset of the arc point from the pivot row
 
         -- Right-pointing unit normal at this arc point.
         local nx = cosT
         local nz = -sign * sinT
 
-        -- Apply reverse flip to z-axis only (path extends behind the vehicle).
+        -- Reverse mirrors the ARC across the pivot row z = fixedAxleZ (the ICR's z),
+        -- NOT across z = 0. Otherwise a rear-steered vehicle's pivot (fixedAxleZ > 0)
+        -- would jump to the wrong side when reversing. x is unchanged either way, so
+        -- the turning circle stays centred at (sign*R, fixedAxleZ) in both directions.
+        -- (Card #147.)
         local px = cx_point
-        local pz = zDir * cz_point
+        local pz = fixedAxleZ + zDir * arcZ
         local normalZ = zDir * nz
 
         leftPoints[i + 1]  = { x = px - halfTrack * nx, z = pz - halfTrack * normalZ }

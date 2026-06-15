@@ -3,8 +3,8 @@
 	<author>MouseSteering</author>
 	<version>0.9.0.0</version>
 	<title>
-		<en>Mouse Steering (Middle-Click)</en>
-		<de>Mauslenkung (Mittelklick)</de>
+		<en>Hold To Steer</en>
+		<de>Hold To Steer</de>
 	</title>
 	<description>
 		<en>Realistic mouse steering for keyboard+mouse: armed automatically when you enter a vehicle (Ctrl+M or middle-click toggles armed off/on). Hold LMB to steer; offset from screen centre sets steer rate; after LMB release steering eases toward centre using the game steering-return speed when available. Optional cabin camera yaw follows steering (look into the corner). With a frontloader, mouse steering stays armed unless you select the loader arm or a tool on that arm—then input pauses for vanilla loader mouse; select tractor or trailer again to steer. Includes a projected driving path on the ground (reversing-camera style) plus optional trailer swing line when reversing. All options under Settings → General.</en>
@@ -37,8 +37,12 @@
 
 		<!-- Game Settings section header -->
 		<text name="ms_section_title">
-			<en>Mouse Steering</en>
-			<de>Mauslenkung</de>
+			<en>Hold To Steer</en>
+			<de>Hold To Steer</de>
+		</text>
+		<text name="ms_tooltip_range_bounds">
+			<en>Adjustable from %s to %s in steps of %s.</en>
+			<de>Einstellbar von %s bis %s in Schritten von %s.</de>
 		</text>
 
 		<!-- Sensitivity controls -->
@@ -81,8 +85,68 @@
 			<de>Fahrspur-Projektion</de>
 		</text>
 		<text name="ms_pathIndicatorMode_long">
-			<en>When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = during LMB mouse steering and the short coast after release, Always = while in any vehicle.</en>
-			<de>Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = bei LMB-Mauslenkung und kurzer Rücklaufphase danach, Immer = solange im Fahrzeug.</de>
+			<en>When the ground path lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = during LMB mouse steering and the short coast after release, Always = while in any vehicle.</en>
+			<de>Wann die Fahrspur-Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = bei LMB-Mauslenkung und kurzer Rücklaufphase danach, Immer = solange im Fahrzeug.</de>
+		</text>
+		<text name="ms_pathFollowGameHud_short">
+			<en>Path follows game HUD</en>
+			<de>Pfad folgt Spiel-HUD</de>
+		</text>
+		<text name="ms_pathFollowGameHud_long">
+			<en>When on (default), the driving path is hidden while the in-game HUD is hidden (e.g. ` key).</en>
+			<de>An (Standard): Fahrspur aus, wenn das Spiel-HUD ausgeblendet ist (z. B. ´-Taste).</de>
+		</text>
+		<text name="ms_pathColorPreset_short">
+			<en>Path colour</en>
+			<de>Pfadfarbe</de>
+		</text>
+		<text name="ms_pathColorPreset_long">
+			<en>Preset colours for the emissive path lines. Cyan helps when green field guidance would blend in.</en>
+			<de>Vorgegebene Farben für die Fahrspurlinien. Cyan hilft, wenn grüne Spurführung im Feld stört.</de>
+		</text>
+		<text name="ms_pathColor_green">
+			<en>Green</en>
+			<de>Grün</de>
+		</text>
+		<text name="ms_pathColor_cyan">
+			<en>Cyan (field guidance)</en>
+			<de>Cyan (Spurführung)</de>
+		</text>
+		<text name="ms_pathColor_magenta">
+			<en>Magenta</en>
+			<de>Magenta</de>
+		</text>
+		<text name="ms_pathColor_orange">
+			<en>Orange</en>
+			<de>Orange</de>
+		</text>
+		<text name="ms_pathColor_yellow">
+			<en>Yellow</en>
+			<de>Gelb</de>
+		</text>
+		<text name="ms_pathColor_blue">
+			<en>Blue</en>
+			<de>Blau</de>
+		</text>
+		<text name="ms_pathColor_bright">
+			<en>Bright / near-white</en>
+			<de>Hell / fast weiß</de>
+		</text>
+		<text name="ms_pathLengthMinM_short">
+			<en>Path length (slow)</en>
+			<de>Pfadlänge (langsam)</de>
+		</text>
+		<text name="ms_pathLengthMinM_long">
+			<en>How far the lines extend at low speed (metres).</en>
+			<de>Wie weit die Linien bei niedriger Geschwindigkeit reichen (Meter).</de>
+		</text>
+		<text name="ms_pathLengthMaxM_short">
+			<en>Path length (fast)</en>
+			<de>Pfadlänge (schnell)</de>
+		</text>
+		<text name="ms_pathLengthMaxM_long">
+			<en>How far the lines extend at this vehicle's top speed (metres).</en>
+			<de>Wie weit die Linien bei Höchstgeschwindigkeit des Fahrzeugs reichen (Meter).</de>
 		</text>
 		<!-- Values for the pathIndicatorMode choice control (order must match Settings.lua) -->
 		<text name="ms_pathMode_off">
@@ -150,16 +214,16 @@
 			<de>Lenkrückstellung aus Spiel</de>
 		</text>
 		<text name="ms_steeringReleaseUseGameSetting_long">
-			<en>After releasing LMB, try to read the same steering return speed as in Options (when the game exposes it). If off, only the fallback percent below is used.</en>
-			<de>Nach Loslassen der LMB dieselbe Lenkrückstell-Geschwindigkeit wie in den Spieloptionen verwenden (wenn die Engine den Wert liefert). Aus = nur der Prozentwert unten.</de>
+			<en>On (default): after LMB release the game centres the wheel like keyboard steering. Off: mod-driven return using fallback % below.</en>
+			<de>An (Standard): Nach LMB-Loslassen Lenkrückstellung wie bei A/D. Aus: Mod steuert Rückstellung (Fallback % unten).</de>
 		</text>
 		<text name="ms_steeringReleasePercent_short">
-			<en>Steering return (fallback %)</en>
-			<de>Lenkrückstellung (Fallback %)</de>
+			<en>Steering return (mod fallback %)</en>
+			<de>Lenkrückstellung (Mod-Fallback %)</de>
 		</text>
 		<text name="ms_steeringReleasePercent_long">
-			<en>How fast mouse steering eases back to centre after LMB release. Higher = faster. Used when game read is disabled or unavailable. Tuned to feel close to keyboard return.</en>
-			<de>Wie schnell die Mauslenkung nach LMB-Loslassen zur Mitte zurückläuft. Höher = schneller. Wenn die Spieloption nicht ausgelesen werden kann. Skalierung ähnlich Tastatur-Rückstellung.</de>
+			<en>Only when “Use game steering return” is off. Higher = faster mod recentre after LMB release.</en>
+			<de>Nur wenn „Lenkrückstellung aus Spiel“ aus ist. Höher = schnellere Mod-Rückstellung nach LMB-Loslassen.</de>
 		</text>
 	</l10n>
 	<extraSourceFiles>

@@ -2,7 +2,41 @@
 
 ## Unreleased
 
+### Added
+
+- **Driving path:** optional follow vanilla HUD (`g_noHudModeEnabled`, default on) so
+  projection hides with the ` HUD toggle; path colour presets (choice list) and
+  min/max path length (metres). Legacy RGB settings migrate to the nearest preset.
+
 ### Fixed
+
+- **Forward coast camera snap on LMB release:** Peeling head-turn overlay
+  immediately on every LMB up broke the slow sweep back to `origRotY`. Overlay
+  is now cleared only when reversing; forward keeps smooth anchored coast.
+- **Look into corner on outside camera:** Head-turn and coast `origRotY` anchor
+  apply only when `camera.isInside` (driver cabin), not chase/outside views.
+  Fixes exterior camera snapping the wrong way after LMB release during steer.
+- **Cabin camera Stop&Go flutter:** Head-turn reverse detection is debounced
+  (~280 ms) on `movingDirection`; standstill keeps the last direction (dead zone).
+  Stops rapid forward/reverse flip of Kurvenblick at crawl speed.
+- **View stuck after LMB up while reversing:** Releasing LMB removes the
+  head-turn overlay from `rotY` immediately; during reverse coast the mod no
+  longer writes camera yaw, so mouse look works normally (no pull toward
+  `origRotY` / forward interior pose).
+
+### Changed
+
+- **Reverse + LMB release:** While travelling backwards, releasing LMB no longer
+  runs the coast phase that re-anchors the cabin camera toward the interior
+  default (`origRotY`), so you can keep looking rearward while steering decays.
+
+### Fixed
+
+- **Steering return after LMB release:** With “use game steering return” on
+  (default), the mod no longer drives a fast exponential `axisSteer` decay.
+  The game centres the wheel like keyboard A/D. HUD/path/camera track
+  `rotatedTime` until centred. Mod-only decay remains when that toggle is off.
+- One-shot log of `GameSettings` steering-return keys on map load (diagnostics).
 
 - **Frontloader vs. LMB mouse steering:** With cab/tractor (or trailer)
   selection, fork/arm could still move from horizontal mouse steering because

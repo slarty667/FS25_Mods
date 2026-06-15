@@ -1,6 +1,6 @@
 --[[
   register.lua
-  Bootstrap for FS25_MouseSteering_MiddleClick.
+  Bootstrap for FS25_HoldToSteer.
   Creates mod instance on Mission00.load, sets mission.mouseSteering, addModEventListener.
 ]]
 
@@ -17,10 +17,12 @@ source(Utils.getFilename("scripts/VehicleCameraExtension.lua", g_currentModDirec
 source(Utils.getFilename("scripts/MouseSteeringVehicle.lua", g_currentModDirectory))
 
 MouseSteeringRegister = {}
+MouseSteeringRegister.MOD_NAME = "FS25_HoldToSteer"
+MouseSteeringRegister.LEGACY_MOD_NAME = "FS25_MouseSteering_MiddleClick"
 
 if MouseSteeringVehicle.specName == nil then
     MouseSteeringVehicle.specName = g_currentModName and (g_currentModName .. ".MouseSteeringVehicle")
-        or "FS25_MouseSteering_MiddleClick.MouseSteeringVehicle"
+        or (MouseSteeringRegister.MOD_NAME .. ".MouseSteeringVehicle")
 end
 
 if g_specializationManager and g_specializationManager:getSpecializationByName("MouseSteeringVehicle") == nil then
@@ -154,7 +156,19 @@ local function onUnload()
 end
 
 local function init()
-    if not g_currentModName or g_currentModName ~= "FS25_MouseSteering_MiddleClick" then return end
+    if not g_currentModName then return end
+    local isCurrent = (g_currentModName == MouseSteeringRegister.MOD_NAME)
+    local isLegacy = (g_currentModName == MouseSteeringRegister.LEGACY_MOD_NAME)
+    if not isCurrent and not isLegacy then return end
+
+    if Logging and Logging.info and isLegacy then
+        Logging.info(
+            "[MouseSteering] loaded via legacy mod name '%s' (recommended: '%s')",
+            MouseSteeringRegister.LEGACY_MOD_NAME,
+            MouseSteeringRegister.MOD_NAME
+        )
+    end
+
     if TypeManager and TypeManager.validateTypes then
         TypeManager.validateTypes = Utils.prependedFunction(TypeManager.validateTypes, MouseSteeringValidateVehicleTypesPre)
         TypeManager.validateTypes = Utils.appendedFunction(TypeManager.validateTypes, MouseSteeringValidateVehicleTypesPost)

@@ -10,7 +10,8 @@
 	<text name="MOUSESTEERING_WARNING_MOTOR_NOT_STARTED">Start the engine first</text>
 
 	<!-- Game Settings section header -->
-	<text name="ms_section_title">Mouse Steering</text>
+	<text name="ms_section_title">Hold To Steer</text>
+	<text name="ms_tooltip_range_bounds">Adjustable from %s to %s in steps of %s.</text>
 
 	<!-- Sensitivity controls -->
 	<text name="ms_rateSensitivity_short">Sensitivity</text>
@@ -28,7 +29,22 @@
 	<text name="ms_hudBarEnabled_long">Top-of-screen bar showing the current steering angle while LMB steering or during the short return-to-centre after you release LMB.</text>
 
 	<text name="ms_pathIndicatorMode_short">Driving path projection</text>
-	<text name="ms_pathIndicatorMode_long">When the green ground lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = during LMB mouse steering and the short coast after release, Always = while in any vehicle.</text>
+	<text name="ms_pathIndicatorMode_long">When the ground path lines are visible. Off = never, On steering = whenever the wheels are turned (mouse, keyboard, wheel, controller), Mouse only = during LMB mouse steering and the short coast after release, Always = while in any vehicle.</text>
+	<text name="ms_pathFollowGameHud_short">Path follows game HUD</text>
+	<text name="ms_pathFollowGameHud_long">When on (default), the driving path is hidden while the in-game HUD is hidden (e.g. ` key). The steering bar already follows the HUD in the same way.</text>
+	<text name="ms_pathColorPreset_short">Path colour</text>
+	<text name="ms_pathColorPreset_long">Preset colours tuned for the emissive path lines. Cyan is a good pick when green field guidance would blend in.</text>
+	<text name="ms_pathColor_green">Green</text>
+	<text name="ms_pathColor_cyan">Cyan (field guidance)</text>
+	<text name="ms_pathColor_magenta">Magenta</text>
+	<text name="ms_pathColor_orange">Orange</text>
+	<text name="ms_pathColor_yellow">Yellow</text>
+	<text name="ms_pathColor_blue">Blue</text>
+	<text name="ms_pathColor_bright">Bright / near-white</text>
+	<text name="ms_pathLengthMinM_short">Path length (slow)</text>
+	<text name="ms_pathLengthMinM_long">How far the lines extend at low speed (metres).</text>
+	<text name="ms_pathLengthMaxM_short">Path length (fast)</text>
+	<text name="ms_pathLengthMaxM_long">How far the lines extend at this vehicle's top speed (metres). Scales linearly with speed in between.</text>
 	<text name="ms_pathMode_off">Off</text>
 	<text name="ms_pathMode_steering">On steering</text>
 	<text name="ms_pathMode_mouse">Mouse only</text>
@@ -47,7 +63,7 @@
 	<text name="ms_steeringHeadTurnInvert_long">Flip left/right if the camera turns the wrong way for your vehicle or camera mod.</text>
 
 	<text name="ms_steeringReleaseUseGameSetting_short">Use game steering return</text>
-	<text name="ms_steeringReleaseUseGameSetting_long">After releasing LMB, try to read the same steering return / centre speed as in Options (when the game exposes it). If off, only the value below is used.</text>
-	<text name="ms_steeringReleasePercent_short">Steering return (fallback %)</text>
-	<text name="ms_steeringReleasePercent_long">How fast mouse steering eases back to centre after LMB release. Higher = faster (aligned with in-game steering return). Used when game read is disabled or unavailable. Scaling is tuned to feel close to keyboard return speed.</text>
+	<text name="ms_steeringReleaseUseGameSetting_long">On (default): after LMB release the game centres the wheel — same as keyboard A/D. The mod stops writing axisSteer. Off: the mod drives return itself using the fallback % below.</text>
+	<text name="ms_steeringReleasePercent_short">Steering return (mod fallback %)</text>
+	<text name="ms_steeringReleasePercent_long">Only when “Use game steering return” is off: how fast the mod recentres after LMB release. Higher = faster. When that toggle is on, the in-game Options slider applies to both keyboard and mouse.</text>
 </l10n>

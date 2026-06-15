@@ -81,6 +81,24 @@ function UIHelper.createBoolElement(generalSettingsPage, id, i18nTextId, target,
     return createElement(generalSettingsPage, generalSettingsPage.checkWoodHarvesterAutoCutBox, id, i18nTextId, target, callbackFunc)
 end
 
+---Format a numeric bound or step for tooltip text (decimals match the UI slider labels).
+---@param value number
+---@param step number
+---@return string
+function UIHelper.formatTooltipNumber(value, step)
+    local digits = 0
+    local tmpStep = step
+    while tmpStep < 1 do
+        digits = digits + 1
+        tmpStep = tmpStep * 10
+    end
+    if digits == 0 then
+        return tostring(math.floor(value + 0.5))
+    end
+    local formatTemplate = "%." .. digits .. "f"
+    return formatTemplate:format(value)
+end
+
 ---Creates an element which allows choosing one out of several text values
 function UIHelper.createChoiceElement(generalSettingsPage, id, i18nTextId, i18nValueMap, target, callbackFunc, nillable)
     local choiceElementBox = createElement(generalSettingsPage, generalSettingsPage.multiVolumeVoiceBox, id, i18nTextId, target, callbackFunc)
@@ -136,6 +154,14 @@ function UIHelper.createRangeElement(generalSettingsPage, id, i18nTextId, minVal
         table.insert(texts, text)
     end
     rangeElement:setTexts(texts)
+
+    local toolTip = rangeElement.elements[1]
+    local baseHint = g_i18n:getText(i18nTextId .. "_long")
+    local minStr = UIHelper.formatTooltipNumber(minValue, step)
+    local maxStr = UIHelper.formatTooltipNumber(maxValue, step)
+    local stepStr = UIHelper.formatTooltipNumber(step, step)
+    local rangeHint = "\n\n" .. string.format(g_i18n:getText("ms_tooltip_range_bounds"), minStr, maxStr, stepStr)
+    toolTip:setText(baseHint .. rangeHint)
 
     return rangeElementBox
 end

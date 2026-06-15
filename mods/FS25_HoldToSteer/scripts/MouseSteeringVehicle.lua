@@ -5,14 +5,14 @@
 ]]
 
 MouseSteeringVehicle = {}
-MouseSteeringVehicle.MOD_NAME = "FS25_MouseSteering_MiddleClick"
+MouseSteeringVehicle.MOD_NAME = "FS25_HoldToSteer"
 --- Weak keys: mark our wrapped callbacks so we do not double-wrap.
 MouseSteeringVehicle._flWrapMarkers = MouseSteeringVehicle._flWrapMarkers
     or setmetatable({}, { __mode = "k" })
 
 if MouseSteeringVehicle.specName == nil then
     MouseSteeringVehicle.specName = g_currentModName and (g_currentModName .. ".MouseSteeringVehicle")
-        or "FS25_MouseSteering_MiddleClick.MouseSteeringVehicle"
+        or "FS25_HoldToSteer.MouseSteeringVehicle"
 end
 
 function MouseSteeringVehicle.prerequisitesPresent(specializations)
@@ -32,7 +32,7 @@ local function getActionId(actionName)
     if InputAction and InputAction[actionName] ~= nil then return InputAction[actionName] end
     if g_inputBinding and g_inputBinding.nameActions then
         if g_inputBinding.nameActions[actionName] ~= nil then return g_inputBinding.nameActions[actionName] end
-        local prefixed = g_currentModName and (g_currentModName .. "." .. actionName) or ("FS25_MouseSteering_MiddleClick." .. actionName)
+        local prefixed = g_currentModName and (g_currentModName .. "." .. actionName) or ("FS25_HoldToSteer." .. actionName)
         if g_inputBinding.nameActions[prefixed] ~= nil then return g_inputBinding.nameActions[prefixed] end
     end
     return nil
@@ -82,8 +82,8 @@ function MouseSteeringVehicle:onUpdate(dt, isActiveForInput, isActiveForInputIgn
     mission.mouseSteering:setControlledVehicle(self)
 
     -- Apply steering here (vehicle spec onUpdate runs AFTER Drivable input processing).
-    -- Only write to axisSteer while LMB is held (active). When released, the game's
-    -- own vehicle physics (caster effect) handle speed-dependent centering naturally.
+    -- Only write axisSteer while LMB is held. After release, vanilla wheel return runs
+    -- unless the user disabled "use game steering return" (mod decay path).
     local suppressFl = false
     if MouseSteering and MouseSteering.isFrontloaderSelectionSuppressingMouse then
         local ok, v = pcall(function()
@@ -91,12 +91,18 @@ function MouseSteeringVehicle:onUpdate(dt, isActiveForInput, isActiveForInputIgn
         end)
         if ok then suppressFl = v end
     end
-    if MouseSteering and MouseSteering.armed
-        and (MouseSteering.active or MouseSteering._steeringCoast)
-        and not suppressFl then
+    -- Write the steering axis while LMB is held (active) AND during the damped
+    -- release coast. Doing it here (vehicle spec onUpdate = after Drivable input
+    -- processing) is the correct phase for the wheel to actually follow the value.
+    -- During the coast we deliberately do NOT apply the deadzone (small eased values
+    -- must keep driving the wheel smoothly to centre instead of snapping to 0).
+    if MouseSteering and MouseSteering.armed and not suppressFl
+        and (MouseSteering.active or MouseSteering._steeringCoast) then
         local out = MouseSteering.steeringValue or 0
-        local deadzone = (MouseSteeringSettings and MouseSteeringSettings.deadzone) or 0.02
-        if math.abs(out) < deadzone then out = 0 end
+        if MouseSteering.active then
+            local deadzone = (MouseSteeringSettings and MouseSteeringSettings.deadzone) or 0.02
+            if math.abs(out) < deadzone then out = 0 end
+        end
 
         local drivable = self.spec_drivable
         if drivable and drivable.lastInputValues then

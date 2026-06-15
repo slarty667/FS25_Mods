@@ -10,7 +10,8 @@
 	<text name="MOUSESTEERING_WARNING_MOTOR_NOT_STARTED">Starte zuerst den Motor</text>
 
 	<!-- Game Settings section header -->
-	<text name="ms_section_title">Mauslenkung</text>
+	<text name="ms_section_title">Hold To Steer</text>
+	<text name="ms_tooltip_range_bounds">Einstellbar von %s bis %s in Schritten von %s.</text>
 
 	<!-- Sensitivity controls -->
 	<text name="ms_rateSensitivity_short">Empfindlichkeit</text>
@@ -28,7 +29,22 @@
 	<text name="ms_hudBarEnabled_long">Oberer Bildschirmrand: Balken zeigt den Lenkeinschlag während LMB-Lenkung und kurz danach beim Zurücklaufen zur Mitte.</text>
 
 	<text name="ms_pathIndicatorMode_short">Fahrspur-Projektion</text>
-	<text name="ms_pathIndicatorMode_long">Wann die grünen Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = bei LMB-Mauslenkung und kurzer Rücklaufphase danach, Immer = solange im Fahrzeug.</text>
+	<text name="ms_pathIndicatorMode_long">Wann die Fahrspur-Bodenlinien sichtbar sind. Aus = nie, Bei Lenkeinschlag = sobald gelenkt wird (Maus, Tastatur, Lenkrad, Controller), Nur Maus = bei LMB-Mauslenkung und kurzer Rücklaufphase danach, Immer = solange im Fahrzeug.</text>
+	<text name="ms_pathFollowGameHud_short">Pfad folgt Spiel-HUD</text>
+	<text name="ms_pathFollowGameHud_long">An (Standard): Fahrspur aus, wenn das Spiel-HUD ausgeblendet ist (z. B. ´-Taste). Der Lenkbalken verhält sich ohnehin wie das HUD.</text>
+	<text name="ms_pathColorPreset_short">Pfadfarbe</text>
+	<text name="ms_pathColorPreset_long">Vorgegebene Farben für die leuchtenden Fahrspurlinien. Cyan eignet sich, wenn grüne Spurführung im Feld stört.</text>
+	<text name="ms_pathColor_green">Grün</text>
+	<text name="ms_pathColor_cyan">Cyan (Spurführung)</text>
+	<text name="ms_pathColor_magenta">Magenta</text>
+	<text name="ms_pathColor_orange">Orange</text>
+	<text name="ms_pathColor_yellow">Gelb</text>
+	<text name="ms_pathColor_blue">Blau</text>
+	<text name="ms_pathColor_bright">Hell / fast weiß</text>
+	<text name="ms_pathLengthMinM_short">Pfadlänge (langsam)</text>
+	<text name="ms_pathLengthMinM_long">Wie weit die Linien bei niedriger Geschwindigkeit reichen (Meter).</text>
+	<text name="ms_pathLengthMaxM_short">Pfadlänge (schnell)</text>
+	<text name="ms_pathLengthMaxM_long">Wie weit die Linien bei Höchstgeschwindigkeit des Fahrzeugs reichen (Meter). Dazwischen linear mit der Geschwindigkeit.</text>
 	<text name="ms_pathMode_off">Aus</text>
 	<text name="ms_pathMode_steering">Bei Lenkeinschlag</text>
 	<text name="ms_pathMode_mouse">Nur Maus</text>
@@ -47,7 +63,7 @@
 	<text name="ms_steeringHeadTurnInvert_long">Links/rechts tauschen, falls die Kamera bei deinem Fahrzeug oder Kamera-Mod falsch herum dreht.</text>
 
 	<text name="ms_steeringReleaseUseGameSetting_short">Lenkrückstellung aus Spiel</text>
-	<text name="ms_steeringReleaseUseGameSetting_long">Nach Loslassen der LMB versuchen, dieselbe Lenkrückstell-Geschwindigkeit wie in den Spieloptionen zu verwenden (wenn die Engine den Wert liefert). Aus = nur der Prozentwert unten.</text>
-	<text name="ms_steeringReleasePercent_short">Lenkrückstellung (Fallback %)</text>
-	<text name="ms_steeringReleasePercent_long">Wie schnell die Mauslenkung nach LMB-Loslassen zur Mitte zurückläuft. Höher = schneller (orientiert an der Lenkrückstellung im Spiel). Wird genutzt, wenn die Spieloption nicht ausgelesen werden kann. Die Skalierung ist so gewählt, dass sich die Geschwindigkeit in etwa wie bei der Tastatur anfühlt.</text>
+	<text name="ms_steeringReleaseUseGameSetting_long">An (Standard): Nach LMB-Loslassen übernimmt das Spiel die Lenkrückstellung — wie bei A/D. Die Mod schreibt dann kein axisSteer mehr. Aus: die Mod steuert die Rückstellung selbst (Fallback % unten).</text>
+	<text name="ms_steeringReleasePercent_short">Lenkrückstellung (Mod-Fallback %)</text>
+	<text name="ms_steeringReleasePercent_long">Nur wenn „Lenkrückstellung aus Spiel“ aus ist: wie schnell die Mod nach LMB-Loslassen zur Mitte auslenkt. Höher = schneller. Mit „aus Spiel“ an gilt der Slider in den Spieloptionen (Tastatur und Maus gleich).</text>
 </l10n>

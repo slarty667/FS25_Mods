@@ -1,6 +1,6 @@
 --[[
   MouseSteering.lua
-  FS25_MouseSteering_MiddleClick: realistic mouse steering for keyboard+mouse.
+  FS25_HoldToSteer: realistic mouse steering for keyboard+mouse.
   Armed by default when entering a vehicle; Ctrl+M or middle-click toggles armed off/on.
   Hold LMB to steer with mouse movement. Steering returns smoothly to center when LMB is released.
   With a frontloader: stays armed; mouse handling pauses only while the loader arm or a tool
@@ -16,12 +16,20 @@
     (like the original mod) to prevent the game from overwriting the value.
   - Optional steering-linked camera yaw (look into the corner) while LMB steering;
     applied after VehicleCamera:update (see afterVehicleCameraUpdate).
-  - After LMB release, steering (and head-turn) decay smoothly toward centre,
-    scaled by the game's steering return / mod fallback (see getSteeringReleasePercent).
+  - After LMB release, steering return uses the game's vanilla wheel-centring
+    (same as keyboard) when "use game steering return" is enabled; the mod only
+    tracks wheel angle for HUD/path/camera until centred. Optional mod decay if that
+    toggle is off (see getSteeringReleasePercent).
+    While reversing, coast does not re-anchor the cabin camera toward the interior
+    default so you can keep looking over your shoulder after releasing LMB.
+    Reverse vs forward for head-turn uses debounced motion (hysteresis) to avoid
+    Stop&Go camera flip/flutter. Forward coast: smooth blend toward origRotY while
+    head-turn decays. Reverse LMB up: peel overlay once; reverse coast does not
+    write rotY (free look).
 ]]
 
 MouseSteering = {}
-MouseSteering.MOD_NAME = "FS25_MouseSteering_MiddleClick"
+MouseSteering.MOD_NAME = "FS25_HoldToSteer"
 MouseSteering.LOG_PREFIX = "[MouseSteering]"
 
 -- State
@@ -34,6 +42,22 @@ MouseSteering.lastActiveVehicle = nil
 MouseSteering._lastControlVehicle = nil
 MouseSteering._steeringCoast = false
 MouseSteering._syncTakeoverFramesLeft = 0
+MouseSteering._steeringReturnDiagLogged = false
+-- Debounced reverse travel for head-turn (Stop&Go: movingDirection flicker).
+MouseSteering._headTurnReverseStable = false
+MouseSteering._headTurnReversePending = nil
+MouseSteering._headTurnReversePendingMs = 0
+local HEAD_TURN_REVERSE_DEBOUNCE_MS = 280
+
+--- Steering-linked yaw ("look into the corner") is cabin-only; chase/outside cameras
+--- use different origRotY semantics — anchoring there pulls the wrong way on LMB release.
+---@param camera table
+---@return boolean
+local function isHeadTurnCabinCamera(camera)
+    if not camera or camera.isInside ~= true then return false end
+    if camera.isPassengerCamera then return false end
+    return true
+end
 
 local function log(fmt, ...)
     if Logging and Logging.info then
@@ -45,9 +69,49 @@ local function getConfig()
     return MouseSteeringSettings or {}
 end
 
---- Steering return speed percent (higher = faster recentre after LMB release).
---- Tries GameSettings first (names vary by patch); falls back to mod setting.
-local function getSteeringReleasePercent()
+--- True when LMB release should use vanilla wheel return (default), not mod decay.
+local function useVanillaSteeringRelease()
+    return getConfig().steeringReleaseUseGameSetting ~= false
+end
+
+--- One-shot log of GameSettings keys that look like steering return (FS25 name discovery).
+local function logSteeringReturnSettingsOnce()
+    if MouseSteering._steeringReturnDiagLogged then return end
+    MouseSteering._steeringReturnDiagLogged = true
+    if not GameSettings or type(GameSettings.SETTING) ~= "table" then
+        log("steering return: GameSettings.SETTING not available")
+        return
+    end
+    local hits = {}
+    for name, id in pairs(GameSettings.SETTING) do
+        if type(name) == "string" then
+            local nl = name:lower()
+            if nl:find("steer", 1, true)
+                and (nl:find("back", 1, true) or nl:find("return", 1, true)
+                    or nl:find("help", 1, true) or nl:find("center", 1, true)
+                    or nl:find("centre", 1, true)) then
+                local valStr = "?"
+                if g_gameSettings and id ~= nil then
+                    local ok, v = pcall(function() return g_gameSettings:getValue(id) end)
+                    if ok then valStr = tostring(v) end
+                end
+                hits[#hits + 1] = name .. "=" .. valStr
+            end
+        end
+    end
+    table.sort(hits)
+    if #hits > 0 then
+        log("steering-return GameSettings candidates: %s", table.concat(hits, ", "))
+    else
+        log("steering-return: no matching GameSettings.SETTING names found")
+    end
+    local p, src = MouseSteering.getSteeringReleasePercentForLog()
+    log("steering-return read for mod fallback: %s%% (source=%s)", tostring(p), src)
+end
+
+--- Steering return speed percent for mod-owned decay only (toggle off / legacy).
+--- Tries GameSettings first; falls back to mod setting.
+function MouseSteering.getSteeringReleasePercentForLog()
     local cfg = getConfig()
     if cfg.steeringReleaseUseGameSetting ~= false
         and g_gameSettings and GameSettings and GameSettings.SETTING then
@@ -57,6 +121,8 @@ local function getSteeringReleasePercent()
             "STEERING_RETURN_SPEED",
             "STEERING_INPUT_RETURN_SPEED",
             "STEERING_INPUT_HELP_SPEED",
+            "STEERING_CENTERING_SPEED",
+            "INPUT_STEERING_CENTERING_SPEED",
         }
         for _, n in ipairs(names) do
             local id = GameSettings.SETTING[n]
@@ -67,13 +133,47 @@ local function getSteeringReleasePercent()
                     if p <= 2 and p >= 0 then
                         p = p * 100
                     end
-                    return math.max(5, math.min(200, p))
+                    return math.max(5, math.min(200, p)), n
                 end
             end
         end
     end
     local p = cfg.steeringReleasePercent or 80
-    return math.max(5, math.min(200, p))
+    return math.max(5, math.min(200, p)), "mod fallback"
+end
+
+local function getSteeringReleasePercent()
+    local p, _ = MouseSteering.getSteeringReleasePercentForLog()
+    return p
+end
+
+-- Exponential time constant (ms) for the damped steering return. Higher percent
+-- (faster recentre / higher game steering-back-speed) -> smaller tau. Calibrated so
+-- the default (game back-speed ~7) lands near the measured vanilla timing (~0.35
+-- units/s linear) but eased; clamped to a sane range. Tunable.
+local function getReturnTauMs()
+    local p = getSteeringReleasePercent() or 80
+    local tau = 1300 / math.max(1, p)
+    if tau < 80 then
+        tau = 80
+    elseif tau > 700 then
+        tau = 700
+    end
+    return tau
+end
+
+-- Max return speed (steering units per second). Caps the START of a large-angle
+-- return so it doesn't whip back ("pop"); below the cap the exponential ease takes
+-- over for the soft finish near centre. Derived from the same percent. Tunable.
+local function getReturnMaxRate()
+    local p = getSteeringReleasePercent() or 80
+    local r = 0.21 * p
+    if r < 0.5 then
+        r = 0.5
+    elseif r > 4.0 then
+        r = 4.0
+    end
+    return r
 end
 
 --- Normalised steering [-1,1] for LMB takeover: pick strongest plausible signal
@@ -197,6 +297,7 @@ function MouseSteering:onToggleArmed(vehicle)
     self.armed = wantArmed
     if not self.armed then
         self:clearSteeringHeadTurn()
+        self:resetHeadTurnReverseStable()
         self.active = false
         self.lmbDown = false
         self._steeringCoast = false
@@ -233,6 +334,7 @@ end
 function MouseSteering:onControlledVehicleChanged(vehicle)
     if vehicle == self._lastControlVehicle then return end
     self:clearSteeringHeadTurn()
+    self:resetHeadTurnReverseStable()
     self._lastControlVehicle = vehicle
     if vehicle then
         self:armByDefault(vehicle)
@@ -337,12 +439,40 @@ function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
             self._mouseSteerRate = nil
             self._awaitingRecenter = false
             self._otherMouseButtonDown = false
+            -- Forward: keep head-turn state for anchored coast (slow sweep to origRotY).
+            -- Reverse only: peel overlay immediately; coast does not touch rotY anyway.
+            local peelOnRelease = self._headTurnReverseStable
+            if not peelOnRelease and VehicleIntrospection and VehicleIntrospection.getMotion then
+                local veh = self:getControlledVehicle()
+                if veh then
+                    local ok, _, isRev = pcall(function()
+                        return VehicleIntrospection:getMotion(veh)
+                    end)
+                    if ok and isRev then peelOnRelease = true end
+                end
+            end
+            if peelOnRelease then
+                self:clearSteeringHeadTurn()
+            end
             local dz = (MouseSteeringSettings and MouseSteeringSettings.deadzone) or 0.02
             if math.abs(self.steeringValue or 0) > dz then
+                -- Damped return: keep the wheel under our analog control and let the
+                -- coast loop ease steeringValue down an exponential curve (soft-close
+                -- feel), clearing the analog markers only once it settles at centre.
+                -- We deliberately do NOT clear the markers here — handing back to the
+                -- engine's *linear* return is what popped on small angles and stopped
+                -- abruptly at centre (card #140, measured).
                 self._steeringCoast = true
             else
+                -- Sub-deadzone: nothing to ease, centre immediately and hand back.
                 self._steeringCoast = false
                 self.steeringValue = 0
+                local drivable = vehicle and vehicle.spec_drivable
+                if drivable and drivable.lastInputValues then
+                    drivable.lastInputValues.axisSteer = 0
+                    drivable.lastInputValues.axisSteerIsAnalog = false
+                    drivable.lastInputValues.axisSteerDeviceCategory = nil
+                end
             end
             log("Active OFF (LMB up, coast=%s)", tostring(self._steeringCoast))
         end
@@ -393,6 +523,58 @@ end
 ---------------------------------------------------------------------------
 -- Steering-linked camera yaw (after VehicleCamera:update; see VehicleCameraExtension)
 ---------------------------------------------------------------------------
+function MouseSteering:resetHeadTurnReverseStable()
+    self._headTurnReverseStable = false
+    self._headTurnReversePending = nil
+    self._headTurnReversePendingMs = 0
+end
+
+--- Debounced reverse detection for cabin head-turn only (not path/HUD).
+--- movingDirection == 0 keeps the last stable state (dead zone at standstill).
+---@param vehicle table
+---@param dt number|nil
+---@return boolean isReverseStable
+function MouseSteering:updateHeadTurnReverseStable(vehicle, dt)
+    if not vehicle then return self._headTurnReverseStable end
+    local movingDirection = 0
+    pcall(function()
+        if type(vehicle.movingDirection) == "number" then
+            movingDirection = vehicle.movingDirection
+        elseif vehicle.spec_motorized and vehicle.spec_motorized.motor
+            and type(vehicle.spec_motorized.motor.currentDirection) == "number" then
+            movingDirection = vehicle.spec_motorized.motor.currentDirection
+        end
+    end)
+
+    local candidate = self._headTurnReverseStable
+    if movingDirection < 0 then
+        candidate = true
+    elseif movingDirection > 0 then
+        candidate = false
+    else
+        return self._headTurnReverseStable
+    end
+
+    if candidate == self._headTurnReverseStable then
+        self._headTurnReversePending = nil
+        self._headTurnReversePendingMs = 0
+        return self._headTurnReverseStable
+    end
+
+    if self._headTurnReversePending ~= candidate then
+        self._headTurnReversePending = candidate
+        self._headTurnReversePendingMs = 0
+    end
+    local dti = dt or g_currentDt or 16
+    self._headTurnReversePendingMs = self._headTurnReversePendingMs + dti
+    if self._headTurnReversePendingMs >= HEAD_TURN_REVERSE_DEBOUNCE_MS then
+        self._headTurnReverseStable = candidate
+        self._headTurnReversePending = nil
+        self._headTurnReversePendingMs = 0
+    end
+    return self._headTurnReverseStable
+end
+
 function MouseSteering:clearSteeringHeadTurn()
     local cam = self._headTurnCameraRef
     local off = self._headTurnOffsetRad or 0
@@ -410,6 +592,7 @@ end
 
 function MouseSteering:afterVehicleCameraUpdate(camera, dt)
     if not camera or not camera.vehicle then return end
+    if not isHeadTurnCabinCamera(camera) then return end
     local vehicle = camera.vehicle
     local spec = vehicle.spec_enterable
     if not spec or camera ~= spec.activeCamera then return end
@@ -427,6 +610,7 @@ function MouseSteering:afterVehicleCameraUpdate(camera, dt)
         and not self:isFrontloaderSelectionSuppressingMouse(vehicle)
 
     local dti = dt or g_currentDt or 16
+    local isRevStable = self:updateHeadTurnReverseStable(vehicle, dti)
     local target = 0
     if should then
         local sv = self.steeringValue or 0
@@ -439,15 +623,7 @@ function MouseSteering:afterVehicleCameraUpdate(camera, dt)
         local sign = cfg.steeringHeadTurnInvert and 1 or -1
         -- Reverse travel: steering axis is still "left wheel" but the cabin faces
         -- the rear — flip head-turn so "steer left" looks left along the path of travel.
-        local reverseMul = 1
-        if VehicleIntrospection and VehicleIntrospection.getMotion then
-            local ok, _, isRev = pcall(function()
-                return VehicleIntrospection:getMotion(vehicle)
-            end)
-            if ok and isRev then
-                reverseMul = -1
-            end
-        end
+        local reverseMul = isRevStable and -1 or 1
         target = sign * sv * maxRad * reverseMul
         local response = cfg.steeringHeadTurnResponse or 14
         local alpha = 1 - math.exp(-dti * 0.001 * response)
@@ -464,33 +640,38 @@ function MouseSteering:afterVehicleCameraUpdate(camera, dt)
     end
 
     local new = self._headTurnSmoothed or 0
-    local useAnchoredCoast = self._steeringCoast and not self.active and should
+    -- Forward coast: blend toward origRotY + decaying head-turn.
+    -- Reverse coast / LMB released: do not write rotY (player can free-look with mouse).
+    local useAnchoredCoast = self._steeringCoast and not self.active and should and not isRevStable
+    local touchCameraRotY = should and (self.active or (not isRevStable))
 
-    pcall(function()
-        if useAnchoredCoast then
-            -- During coast: steer the cabin view back toward the interior default
-            -- (origRotY) while the steering-linked offset decays — same "null" as on enter.
-            local origY = camera.origRotY
-            if origY ~= nil then
-                local desired = origY + new
-                local vk = (cfg.steeringHeadTurnResponse or 14) * 0.55
-                local k = 1 - math.exp(-dti * 0.001 * vk)
-                if k > 1 then k = 1 elseif k < 0 then k = 0 end
-                camera.rotY = camera.rotY + (desired - camera.rotY) * k
+    if touchCameraRotY then
+        pcall(function()
+            if useAnchoredCoast then
+                -- During coast: steer the cabin view back toward the interior default
+                -- (origRotY) while the steering-linked offset decays — same "null" as on enter.
+                local origY = camera.origRotY
+                if origY ~= nil then
+                    local desired = origY + new
+                    local vk = (cfg.steeringHeadTurnResponse or 14) * 0.55
+                    local k = 1 - math.exp(-dti * 0.001 * vk)
+                    if k > 1 then k = 1 elseif k < 0 then k = 0 end
+                    camera.rotY = camera.rotY + (desired - camera.rotY) * k
+                else
+                    camera.rotY = camera.rotY - prev + new
+                end
             else
+                -- LMB steering: incremental head-turn overlay.
                 camera.rotY = camera.rotY - prev + new
             end
-        else
-            -- LMB steering: incremental head-turn overlay (unchanged).
-            camera.rotY = camera.rotY - prev + new
-        end
-    end)
+        end)
+    end
     self._headTurnOffsetRad = new
     self._headTurnCameraRef = camera
 end
 
 ---------------------------------------------------------------------------
--- update: accumulate while LMB active; smooth decay ("coast") after release
+-- update: accumulate while LMB active; after release track wheel (vanilla return) or mod decay
 ---------------------------------------------------------------------------
 function MouseSteering:update(dt)
     self:ensureCameraExtensionInstalled()
@@ -518,7 +699,16 @@ function MouseSteering:update(dt)
     end
 
     local vehicle = self:getControlledVehicle()
-    if not vehicle then
+    -- "On foot" must be detected even though getControlledVehicle() has sticky
+    -- fallbacks (drawVehicle / lastActiveVehicle) that keep returning the LAST
+    -- vehicle after the player has exited. Those fallbacks are needed while
+    -- driving (g_currentMission.controlledVehicle is nil in many FS25 contexts),
+    -- but on foot they made the lane projection linger: the plain `not vehicle`
+    -- branch was never reached, and `if not self.armed then return end` below
+    -- bailed out before SteeringPathIndicator:update could hide the pool. So a
+    -- resolved-but-not-entered vehicle counts as on-foot too. (Exit-hide fix.)
+    local entered = vehicle and (vehicle.getIsEntered == nil or vehicle:getIsEntered())
+    if not vehicle or not entered then
         if self.armed then
             self.armed = false
             self.active = false
@@ -529,6 +719,10 @@ function MouseSteering:update(dt)
         end
         self:clearSteeringHeadTurn()
         self._lastControlVehicle = nil
+        self.drawVehicle = nil
+        self.lastActiveVehicle = nil  -- drop the sticky fallback so we stay "on foot"
+        -- Hide the lane projection so it doesn't linger from the last vehicle.
+        if SegmentPool and SegmentPool.hideAll then SegmentPool:hideAll() end
         return
     end
 
@@ -615,25 +809,40 @@ function MouseSteering:update(dt)
     end
 
     -----------------------------------------------------------------
-    -- Apply steering: while LMB held, or while "coasting" decay after release.
-    -- Coast speed follows getSteeringReleasePercent() (game option when found).
+    -- Apply steering while LMB held. After release: vanilla wheel return (default)
+    -- or mod exponential decay when "use game steering return" is off.
     -----------------------------------------------------------------
-    if self.active or self._steeringCoast then
-        if self._steeringCoast and not self.active then
-            -- Time constant ~ keyboard return: old 520*100/p was far too slow.
-            -- Higher in-game % => smaller tau => faster decay.
-            local p = math.max(12, getSteeringReleasePercent())
-            local baseTau = 24
-            local tauMs = baseTau * (100 / p)
-            local dti = dt or g_currentDt or 16
-            if tauMs < 5 then tauMs = 5 elseif tauMs > 320 then tauMs = 320 end
-            self.steeringValue = (self.steeringValue or 0) * math.exp(-dti / tauMs)
-            if math.abs(self.steeringValue) < math.max(deadzone * 0.5, 0.003) then
-                self.steeringValue = 0
-                self._steeringCoast = false
+    if self._steeringCoast and not self.active then
+        -- Damped return: ease steeringValue down an exponential curve (fast at first,
+        -- slow near centre — like a real wheel with a damper). The value is APPLIED to
+        -- the wheel from MouseSteeringVehicle:onUpdate (correct update phase). Here we
+        -- only advance the curve and, once settled, hand back to the engine.
+        local dti = dt or g_currentDt or 16
+        local tauMs = getReturnTauMs()
+        local sv = self.steeringValue or 0
+        -- Exponential ease toward centre (soft-close), then cap the per-frame step
+        -- so a large initial angle returns at a constant moderate rate instead of
+        -- whipping back. Near centre the exponential step is below the cap and takes
+        -- over again -> gentle finish. (Card #140: big angles "popped" with pure exp.)
+        local step = sv - sv * math.exp(-dti / tauMs)        -- toward 0, same sign as sv
+        local maxStep = getReturnMaxRate() * (dti / 1000)
+        if math.abs(step) > maxStep then
+            step = (sv >= 0) and maxStep or -maxStep
+        end
+        self.steeringValue = sv - step
+        if math.abs(self.steeringValue) < math.max(deadzone * 0.5, 0.003) then
+            self.steeringValue = 0
+            self._steeringCoast = false
+            local drivable = vehicle.spec_drivable
+            if drivable and drivable.lastInputValues then
+                drivable.lastInputValues.axisSteer = 0
+                drivable.lastInputValues.axisSteerIsAnalog = false
+                drivable.lastInputValues.axisSteerDeviceCategory = nil
             end
         end
+    end
 
+    if self.active then
         local out = self.steeringValue
         if math.abs(out) < deadzone then out = 0 end
 
@@ -649,12 +858,17 @@ function MouseSteering:update(dt)
             end
         end
 
-        -- Frontloader fork / arm hydraulics still read mouse while the cab is selected;
-        -- clear their axis* lastInputValues after we wrote steering (mission update order).
-        if self.active then
-            self:tryZeroFrontloaderHydraulics(vehicle, "missionUpdate")
+        self:tryZeroFrontloaderHydraulics(vehicle, "missionUpdate")
+    elseif self._steeringCoast and not useVanillaSteeringRelease() then
+        -- Mod decay path still drives axisSteer (legacy / power-user).
+        local out = self.steeringValue
+        if math.abs(out) < deadzone then out = 0 end
+        local drivable = vehicle.spec_drivable
+        if drivable and drivable.lastInputValues then
+            drivable.lastInputValues.axisSteer = out
+            drivable.lastInputValues.axisSteerIsAnalog = true
         end
-    else
+    elseif not self._steeringCoast then
         self.steeringValue = 0
         self._steeringCoast = false
         self._syncTakeoverFramesLeft = 0
@@ -684,6 +898,7 @@ function MouseSteering:loadMap(name)
     if SteeringPathIndicator and SteeringPathIndicator.init then
         SteeringPathIndicator:init()
     end
+    logSteeringReturnSettingsOnce()
     log("loaded — armed by default in vehicles; Ctrl+M or middle-click to toggle off/on; hold LMB to steer")
 end
 

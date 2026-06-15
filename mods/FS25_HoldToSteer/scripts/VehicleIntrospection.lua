@@ -18,11 +18,14 @@ VehicleIntrospection = {}
 -- Per-vehicle cache so we don't repeat the log spam every frame.
 VehicleIntrospection._cache = setmetatable({}, { __mode = "k" })  -- weak keys
 
--- Sensible defaults (mid-size tractor).
+-- Sensible defaults (mid-size tractor, front-wheel steering).
 VehicleIntrospection.DEFAULTS = {
     wheelbase     = 2.5,
     trackWidth    = 1.8,
     maxSteerAngle = math.rad(40),  -- ~0.698 rad
+    steerMode     = "front",        -- "front" | "rear" | "all" (4WS)
+    fixedAxleZ    = 0,              -- z of the non-steered axle the turn circle anchors to
+    steerInvert   = false,          -- rear-steer yaws opposite to the input
 }
 
 -- Vehicle specs are metatable-backed: pairs(vehicle) does not list spec_* (see docs/learned.md).
@@ -218,6 +221,44 @@ local function inferMaxSteerFromWheels(wheels)
     return nil
 end
 
+---Classify which axle steers: "front" (default car/tractor), "rear" (combines,
+---harvesters) or "all" (four-wheel / crab steering). Uses each wheel's Z position
+---and its steering-rotation limit. FS local frame: +Z = forward, so front wheels
+---sit at the largest Z.
+---@param wheels table|nil
+---@return string|nil mode, or nil when there is no usable steering/position info
+local function inferSteerModeFromWheels(wheels)
+    if type(wheels) ~= "table" then return nil end
+    local minZ, maxZ
+    local steeredZ = {}
+    for _, w in ipairs(wheels) do
+        if type(w) == "table" then
+            local z = w.positionZ or (w.netInfo and w.netInfo.positionZ)
+                or (w.wheelConfig and w.wheelConfig.positionZ)
+            local r = w.rotMax or w.maxRot or w.steeringAngle
+            if type(z) == "number" then
+                if minZ == nil or z < minZ then minZ = z end
+                if maxZ == nil or z > maxZ then maxZ = z end
+                if type(r) == "number" and math.abs(r) > 0.05 then
+                    table.insert(steeredZ, z)
+                end
+            end
+        end
+    end
+    if minZ == nil or maxZ == nil or maxZ <= minZ then return nil end
+    if #steeredZ == 0 then return nil end  -- no steering info: caller keeps the default
+    local span = maxZ - minZ
+    local tol = math.max(0.3, span * 0.25)
+    local frontSteered, rearSteered = false, false
+    for _, z in ipairs(steeredZ) do
+        if math.abs(z - maxZ) <= tol then frontSteered = true end
+        if math.abs(z - minZ) <= tol then rearSteered = true end
+    end
+    if frontSteered and rearSteered then return "all" end
+    if rearSteered then return "rear" end
+    return "front"
+end
+
 ---Retrieve or compute the three geometry numbers for a vehicle.
 ---Cached per vehicle (weak keys). Returns defaults on any failure.
 ---@param vehicle table
@@ -231,6 +272,9 @@ function VehicleIntrospection:getGeometry(vehicle)
         wheelbase     = VehicleIntrospection.DEFAULTS.wheelbase,
         trackWidth    = VehicleIntrospection.DEFAULTS.trackWidth,
         maxSteerAngle = VehicleIntrospection.DEFAULTS.maxSteerAngle,
+        steerMode     = VehicleIntrospection.DEFAULTS.steerMode,
+        fixedAxleZ    = VehicleIntrospection.DEFAULTS.fixedAxleZ,
+        steerInvert   = VehicleIntrospection.DEFAULTS.steerInvert,
     }
 
     local wheels = nil
@@ -253,13 +297,29 @@ function VehicleIntrospection:getGeometry(vehicle)
             local ms = inferMaxSteerFromWheels(wheels)
             if ms and ms > 0.1 then geo.maxSteerAngle = ms end
         end)
+        pcall(function()
+            local mode = inferSteerModeFromWheels(wheels)
+            if mode then
+                geo.steerMode = mode
+                if mode == "rear" then
+                    -- Turn circle on the FRONT axle (a wheelbase ahead of the rear/origin).
+                    geo.fixedAxleZ = geo.wheelbase
+                    geo.steerInvert = true
+                elseif mode == "all" then
+                    -- 4WS / crab: approximate the pivot at the vehicle centre.
+                    geo.fixedAxleZ = geo.wheelbase * 0.5
+                    geo.steerInvert = false
+                end
+            end
+        end)
     end
 
     -- One-shot diagnostic log per vehicle.
     local name = "?"
     pcall(function() if vehicle.getName then name = vehicle:getName() or "?" end end)
-    log("vehicle=%s wheelbase=%.2f trackWidth=%.2f maxSteerRad=%.3f%s",
+    log("vehicle=%s wheelbase=%.2f trackWidth=%.2f maxSteerRad=%.3f steerMode=%s fixedAxleZ=%.2f%s",
         name, geo.wheelbase, geo.trackWidth, geo.maxSteerAngle,
+        geo.steerMode, geo.fixedAxleZ,
         wheels and "" or " (no spec_wheels; full defaults)"
     )
 

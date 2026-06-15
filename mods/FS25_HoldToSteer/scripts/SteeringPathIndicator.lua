@@ -12,11 +12,15 @@
 
 SteeringPathIndicator = {}
 
--- Small lift so lines don't Z-fight with the ground.
-local GROUND_Y_OFFSET = 0.10
+-- Lift so lines don't Z-fight with the ground and don't sink into convex
+-- terrain between sample points. 0.25 m: a small safety margin over NaviHelper's
+-- 0.20 m, since our flat (yaw-only, no pitch) tiles still ride a touch under the
+-- surface on slopes. Combined with dense sampling this stops the half-fade.
+local GROUND_Y_OFFSET = 0.25
 
--- Green, matching the mockup.
-local COLOR_ACTIVE = { 0.15, 0.85, 0.35, 0.92 }
+-- Default tractor path colour (overridden by settings). Low R/B + strong G reads
+-- well on bright ground without washing out to white emissive bloom.
+local DEFAULT_PATH_COLOR = { 0.05, 0.55, 0.16, 1.0 }
 
 -- Yellow-ish for the trailer's projected path — distinct enough from the
 -- tractor's green to tell apart at a glance.
@@ -31,6 +35,35 @@ local function log(fmt, ...)
     if Logging and Logging.info then
         Logging.info("[MouseSteering][Path] " .. fmt, ...)
     end
+end
+
+---True when the vanilla in-game HUD is shown (not hidden with ` / menu).
+local function isGameHudVisible()
+    if g_noHudModeEnabled then return false end
+    if g_gui and g_gui.getIsGuiVisible and g_gui:getIsGuiVisible() then return false end
+    if g_currentMission and g_currentMission.hud and g_currentMission.hud.isMenuVisible then
+        return false
+    end
+    return true
+end
+
+---@return table rgba in 0..1
+local function getConfiguredPathColor()
+    if MouseSteeringSettings and MouseSteeringSettings.getPathColor then
+        return MouseSteeringSettings:getPathColor()
+    end
+    return DEFAULT_PATH_COLOR
+end
+
+---@return number minLengthM, number maxLengthM
+local function getConfiguredPathLengths()
+    local s = MouseSteeringSettings or {}
+    local minL = type(s.pathLengthMinM) == "number" and s.pathLengthMinM or 10
+    local maxL = type(s.pathLengthMaxM) == "number" and s.pathLengthMaxM or 40
+    if minL < 2 then minL = 2 end
+    if maxL < minL + 2 then maxL = minL + 2 end
+    if maxL > 120 then maxL = 120 end
+    return minL, maxL
 end
 
 ---Initialise the pool. Idempotent.
@@ -175,6 +208,11 @@ local function shouldRender(vehicle, axisSteer)
     local mode = (MouseSteeringSettings and MouseSteeringSettings.pathIndicatorMode) or MODE_STEERING
     if mode == MODE_OFF then return false end
 
+    -- When enabled (default), hide projection while the player toggles HUD off (`).
+    if MouseSteeringSettings and MouseSteeringSettings.pathFollowGameHud ~= false then
+        if not isGameHudVisible() then return false end
+    end
+
     if mode == MODE_MOUSE then
         -- Only while mouse steering is driving axisSteer (LMB or release coast).
         if not MouseSteering or not MouseSteering.armed
@@ -221,13 +259,16 @@ function SteeringPathIndicator:update(dt, vehicle)
     -- matters a lot — the old behaviour had several metres of line hidden
     -- inside the cab.
     local startDist = isReverse and math.abs(bounds.rearZ) or bounds.frontZ
+    local pathLenMin, pathLenMax = getConfiguredPathLengths()
+    local pathColor = getConfiguredPathColor()
 
     -- Compute path in vehicle-local coordinates. Path length scales with speed
     -- relative to this vehicle's top speed (tractor at 50% -> ~22 m, truck at
     -- 50% -> ~22 m too; the feel stays consistent across vehicle classes).
     local leftLocal, rightLocal = PathGeometry.computePath(
         axisSteer, speedKmh, maxSpeedKmh,
-        geo.wheelbase, lineWidth, geo.maxSteerAngle, isReverse, startDist
+        geo.wheelbase, lineWidth, geo.maxSteerAngle, isReverse, startDist, nil,
+        pathLenMin, pathLenMax, geo.fixedAxleZ, geo.steerInvert
     )
 
     -- Trailer kinematics: only when reversing, a trailer is hitched, and
@@ -244,7 +285,8 @@ function SteeringPathIndicator:update(dt, vehicle)
             local hitchStart = math.abs(tk.hitchOffsetZ)
             local hitchPathA, _hitchPathB = PathGeometry.computePath(
                 axisSteer, speedKmh, maxSpeedKmh,
-                geo.wheelbase, 0, geo.maxSteerAngle, isReverse, hitchStart
+                geo.wheelbase, 0, geo.maxSteerAngle, isReverse, hitchStart, nil,
+                pathLenMin, pathLenMax
             )
             trailerLeftLocal, trailerRightLocal = TrailerKinematics.simulate(
                 hitchPathA, tk.tongueLength, tk.halfWidth, tk.hitchAngle, isReverse
@@ -264,13 +306,13 @@ function SteeringPathIndicator:update(dt, vehicle)
         local trailerRightWorld = localPointsToWorld(trailerRightLocal, vehicle.rootNode, fallbackY)
         if SegmentPool and SegmentPool.applySegmentGroups then
             SegmentPool:applySegmentGroups({
-                { left = leftWorld,        right = rightWorld,        color = COLOR_ACTIVE  },
+                { left = leftWorld,        right = rightWorld,        color = pathColor  },
                 { left = trailerLeftWorld, right = trailerRightWorld, color = COLOR_TRAILER },
             })
         end
     else
         if SegmentPool and SegmentPool.applySegments then
-            SegmentPool:applySegments(leftWorld, rightWorld, COLOR_ACTIVE)
+            SegmentPool:applySegments(leftWorld, rightWorld, pathColor)
         end
     end
 end
