@@ -422,6 +422,25 @@ local function menuMapElement()
     return g_inGameMenu.baseIngameMap or g_inGameMenu.ingameMap
 end
 
+-- True only while the fullscreen MAP page is the visible one. Uses the page frame's
+-- own visibility (getIsVisible walks the parent chain), which is reliable across
+-- builds — unlike comparing page names/objects. Without this, dots would paint over
+-- every ESC sub-page (calendar, prices, ...).
+local function isMenuMapPageActive()
+    if g_inGameMenu == nil or not g_inGameMenu.isOpen then return false end
+    local page = g_inGameMenu.pageMapOverview or g_inGameMenu.pageMap
+    if page ~= nil and page.getIsVisible ~= nil then
+        local ok, vis = pcall(page.getIsVisible, page)
+        if ok then return vis == true end
+    end
+    local map = menuMapElement()
+    if map ~= nil and map.getIsVisible ~= nil then
+        local ok, vis = pcall(map.getIsVisible, map)
+        if ok then return vis == true end
+    end
+    return false
+end
+
 local function worldToMenuMapPos(wx, wz)
     local map = menuMapElement()
     if map == nil then return nil, nil end
@@ -473,6 +492,7 @@ end
 
 function NaviHelper._drawMenuMapInner()
     if g_inGameMenu == nil or not g_inGameMenu.isOpen then return end
+    if not isMenuMapPageActive() then return end  -- only on the map page, not calendar/prices/etc.
 
     local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
         or (g_currentMission and g_currentMission.controlledVehicle)
