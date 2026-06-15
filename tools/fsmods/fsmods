@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Wrapper: run fsmods.py with the project-local virtualenv (tools/fsmods/.venv).
+# Convention: every project gets its own .venv. fsmods is stdlib-only, so the
+# venv exists mainly to pin a known interpreter (Python >= 3.11 for tomllib).
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+VENV_PY="$HERE/.venv/bin/python"
+
+if [[ ! -x "$VENV_PY" ]]; then
+  echo "fsmods: project venv missing at $HERE/.venv" >&2
+  echo "Bootstrap it once with a Python >= 3.11:" >&2
+  echo "    python3.13 -m venv \"$HERE/.venv\"" >&2
+  echo "(no dependencies to install - the tool is stdlib-only)" >&2
+  exit 1
+fi
+
+exec "$VENV_PY" "$HERE/fsmods.py" "$@"
