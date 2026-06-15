@@ -408,6 +408,10 @@ function NaviHelper.onMapClick(frame, element, worldX, worldZ)
     end
     NaviHelper:syncDestShim(slot)
     NaviHelper:invalidateRouteCaches()
+    -- Setting a route turns the nav aid on for this vehicle, so closing the map
+    -- immediately shows the arrow + ground route line (no extra Alt+N needed).
+    NaviHelper.navAidOn = true
+    NaviHelper.drawVehicle = v
     log("map: point added at %.1f, %.1f (route now %d pts)", worldX, worldZ, #slot.route)
 end
 
@@ -431,6 +435,23 @@ local function worldToMenuMapPos(wx, wz)
     local ok, sx, sy = pcall(layout.getMapObjectPosition, layout, mapX, mapZ, 0, 0, 0, true)
     if ok and sx ~= nil then return sx, sy end
     return nil, nil
+end
+
+-- Draw a dotted "breadcrumb" line between two screen points (no overlay rotation needed).
+local function drawMapBreadcrumb(overlayId, x1, y1, x2, y2, aspect)
+    local dx, dy = x2 - x1, y2 - y1
+    local distN = math.sqrt(dx * dx + dy * dy)
+    local spacing = 0.011
+    local count = math.floor(distN / spacing)
+    if count < 1 then return end
+    local w = 0.0045
+    local h = w * aspect
+    setOverlayColor(overlayId, 0.27, 0.77, 0.37, 0.65)
+    for i = 1, count - 1 do
+        local t = i / count
+        local px, py = x1 + dx * t, y1 + dy * t
+        renderOverlay(overlayId, px - w * 0.5, py - h * 0.5, w, h)
+    end
 end
 
 -- Throttled diagnostic: log at most a few times so we can see why dots don't show
@@ -484,6 +505,22 @@ function NaviHelper._drawMenuMapInner()
 
     local aspect = g_screenAspectRatio or (16 / 9)
     local n = #slot.route
+
+    -- Route line: connect vehicle -> waypoints -> destination with a breadcrumb.
+    local seq = {}
+    local vx, _, vz = NaviHelper:getVehiclePosition(v)
+    if vx and vz then
+        local sx, sy = worldToMenuMapPos(vx, vz)
+        if sx then seq[#seq + 1] = { sx, sy } end
+    end
+    for i = 1, n do
+        local sx, sy = worldToMenuMapPos(slot.route[i].x, slot.route[i].z)
+        if sx then seq[#seq + 1] = { sx, sy } end
+    end
+    for i = 1, #seq - 1 do
+        drawMapBreadcrumb(NaviHelper.dotOverlayId, seq[i][1], seq[i][2], seq[i + 1][1], seq[i + 1][2], aspect)
+    end
+
     local converted = 0
     for i = 1, n do
         local p = slot.route[i]
@@ -886,7 +923,8 @@ end
 
 -- Recompute the manual route polyline if dirty or the vehicle has drifted.
 function NaviHelper:updateRoute()
-    local vehicle = g_currentMission and g_currentMission.controlledVehicle
+    local vehicle = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
+        or (g_currentMission and g_currentMission.controlledVehicle)
     if not vehicle then return end
 
     local key = vehicleKey(vehicle)
@@ -924,7 +962,8 @@ end
 
 function NaviHelper:update(dt)
     local ok, err = pcall(function()
-        local v = NaviHelper.drawVehicle or (g_currentMission and g_currentMission.controlledVehicle)
+        local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
+            or (g_currentMission and g_currentMission.controlledVehicle)
         if not v then return end
         self:updateRoute()
     end)
