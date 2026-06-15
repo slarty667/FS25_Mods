@@ -68,7 +68,8 @@ local function check()
     if TypeManager and TypeManager.validateTypes then
         TypeManager.validateTypes = Utils.prependedFunction(TypeManager.validateTypes, NaviHelperValidateVehicleTypes)
     end
-    addModEventListener(NaviHelper)
+    -- NaviHelper registers itself as mod event listener at the end of NaviHelper.lua
+    -- (canonical self-registration). Do NOT add it again here, or update()/draw() run twice per frame.
     NaviHelperRegister.registerNaviHelperToVehicleTypes()
 end
 
