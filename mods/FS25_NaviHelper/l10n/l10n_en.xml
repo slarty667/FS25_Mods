@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <l10n>
 	<text name="input_NAVIHELPER_TOGGLE_UI">NaviHelper: Toggle UI</text>
-	<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">NaviHelper: Set target from map</text>
-	<text name="input_NAVIHELPER_CLEAR_TARGET">NaviHelper: Clear target</text>
+	<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">NaviHelper: Map hint</text>
+	<text name="input_NAVIHELPER_CLEAR_TARGET">NaviHelper: Clear route</text>
 	<text name="input_NAVIHELPER_SET_TARGET_AHEAD">NaviHelper: Set target ahead</text>
 	<text name="NAVIHELPER_MSG_DESTINATION_REACHED">Destination reached</text>
 	<text name="NAVIHELPER_DIR_LEFT">left</text>
@@ -10,4 +10,6 @@
 	<text name="NAVIHELPER_HUD_IN">in</text>
 	<text name="NAVIHELPER_HUD_TOTAL">Total</text>
 	<text name="NAVIHELPER_MSG_MAP_HINT">NaviHelper: In the map, Ctrl+click = add point, Shift+click = remove last.</text>
+	<text name="NAVIHELPER_MSG_NEED_AUTODRIVE">NaviHelper: No destination. Set one with Ctrl+click in the map (or in AutoDrive).</text>
+	<text name="NAVIHELPER_MSG_SELECT_TARGET_IN_AD">NaviHelper: Please select a destination in AutoDrive (e.g. the "Drive" window).</text>
 </l10n>

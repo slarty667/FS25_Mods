@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8" standalone="no"?>
 <l10n>
 	<text name="input_NAVIHELPER_TOGGLE_UI">NaviHelper: UI ein/aus</text>
-	<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">NaviHelper: Ziel per Karte setzen</text>
-	<text name="input_NAVIHELPER_CLEAR_TARGET">NaviHelper: Ziel löschen</text>
+	<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">NaviHelper: Karten-Hinweis</text>
+	<text name="input_NAVIHELPER_CLEAR_TARGET">NaviHelper: Route löschen</text>
 	<text name="input_NAVIHELPER_SET_TARGET_AHEAD">NaviHelper: Ziel voraus setzen</text>
 	<text name="NAVIHELPER_MSG_DESTINATION_REACHED">Ziel erreicht</text>
 	<text name="NAVIHELPER_DIR_LEFT">links</text>
@@ -10,4 +10,6 @@
 	<text name="NAVIHELPER_HUD_IN">in</text>
 	<text name="NAVIHELPER_HUD_TOTAL">Gesamt</text>
 	<text name="NAVIHELPER_MSG_MAP_HINT">NaviHelper: In der Karte Strg+Klick = Punkt setzen, Umschalt+Klick = letzten loeschen.</text>
+	<text name="NAVIHELPER_MSG_NEED_AUTODRIVE">NaviHelper: Kein Ziel. Setze eins per Strg+Klick in der Karte (oder in AutoDrive).</text>
+	<text name="NAVIHELPER_MSG_SELECT_TARGET_IN_AD">NaviHelper: Bitte in AutoDrive ein Ziel wählen (z. B. im Fenster „Fahren“).</text>
 </l10n>

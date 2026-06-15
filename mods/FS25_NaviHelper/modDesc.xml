@@ -10,35 +10,10 @@
 		<de>NaviHelper</de>
 	</title>
 	<description>
-		<en>Manual driving navigation: shows destination name, next-turn instruction and total distance, plus a route line on the ground using AutoDrive routes when available. Set the destination in AutoDrive or by map click.</en>
-		<de>Manuelle Fahrt-Navigation: zeigt Zielname, Abbiegehinweis und Gesamtdistanz sowie eine Routenlinie am Boden (über AutoDrive-Routen, wenn vorhanden). Ziel in AutoDrive oder per Kartenklick setzen.</de>
+		<en>Manual driving navigation: shows destination name, next-turn instruction and total distance, plus a route line on the ground. Set the route directly in the map with Ctrl+click (works with or without AutoDrive); further Ctrl+clicks add waypoints, Shift+click removes the last point.</en>
+		<de>Manuelle Fahrt-Navigation: zeigt Zielname, Abbiegehinweis und Gesamtdistanz sowie eine Routenlinie am Boden. Route direkt in der Karte per Strg+Klick setzen (mit oder ohne AutoDrive); weitere Strg+Klicks fügen Zwischenpunkte hinzu, Umschalt+Klick löscht den letzten Punkt.</de>
 	</description>
-	<l10n filenamePrefix="l10n/l10n">
-		<text name="input_NAVIHELPER_TOGGLE_UI">
-			<en>NaviHelper: Toggle UI</en>
-			<de>NaviHelper: UI ein/aus</de>
-		</text>
-		<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">
-			<en>NaviHelper: Set target from map</en>
-			<de>NaviHelper: Ziel per Karte setzen</de>
-		</text>
-		<text name="input_NAVIHELPER_CLEAR_TARGET">
-			<en>NaviHelper: Clear target</en>
-			<de>NaviHelper: Ziel löschen</de>
-		</text>
-		<text name="input_NAVIHELPER_SET_TARGET_AHEAD">
-			<en>NaviHelper: Set target ahead</en>
-			<de>NaviHelper: Ziel voraus setzen</de>
-		</text>
-		<text name="NAVIHELPER_MSG_NEED_AUTODRIVE">
-			<en>NaviHelper: AutoDrive is required. Please install AutoDrive or set a target via map (Alt+M).</en>
-			<de>NaviHelper: AutoDrive wird benötigt. Bitte AutoDrive installieren oder Ziel per Karte setzen (Alt+M).</de>
-		</text>
-		<text name="NAVIHELPER_MSG_SELECT_TARGET_IN_AD">
-			<en>NaviHelper: Please select a destination in AutoDrive (e.g. in "Fahren" window).</en>
-			<de>NaviHelper: Bitte in AutoDrive ein Ziel wählen (z. B. im Fenster „Fahren“).</de>
-		</text>
-	</l10n>
+	<l10n filenamePrefix="l10n/l10n"/>
 	<extraSourceFiles>
 		<sourceFile filename="register.lua"/>
 	</extraSourceFiles>

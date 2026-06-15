@@ -80,10 +80,19 @@ local function logDevError(fmt, ...)
     end
 end
 
--- Localized text with a hard fallback (used for HUD strings; falls back if g_i18n is unavailable).
+-- Localized text with a hard fallback. Robust against a missing key: g_i18n:getText
+-- returns "Missing 'KEY' in ..." for unknown keys, so we check hasText first and also
+-- guard against that prefix — the fallback must never show the raw engine string.
 local function tr(key, fallback)
     if g_i18n and g_i18n.getText then
-        return g_i18n:getText(key)
+        if g_i18n.hasText and not g_i18n:hasText(key) then
+            return fallback
+        end
+        local text = g_i18n:getText(key)
+        if text == nil or text == "" or text:sub(1, 8) == "Missing " then
+            return fallback
+        end
+        return text
     end
     return fallback
 end
@@ -127,6 +136,13 @@ function NaviHelper:loadMap(name)
         InGameMenuMapFrame.onClickMap = Utils.appendedFunction(InGameMenuMapFrame.onClickMap, NaviHelper.onMapClick)
         NaviHelper._mapClickHooked = true
         log("map click hook installed (InGameMenuMapFrame.onClickMap)")
+    end
+
+    -- Draw route dots on the open map (the "Böbbel").
+    if InGameMenu ~= nil and InGameMenu.draw ~= nil and not NaviHelper._menuDrawHooked then
+        InGameMenu.draw = Utils.appendedFunction(InGameMenu.draw, NaviHelper.drawMenuMap)
+        NaviHelper._menuDrawHooked = true
+        log("menu map draw hook installed (InGameMenu.draw)")
     end
 
     -- Action events are registered by NaviHelperVehicle specialization (VEHICLE category).
@@ -296,7 +312,11 @@ function NaviHelper:deleteMap()
         end
         NaviHelperSettings:saveToXML()
     end
-    -- The onClickMap hook is appended once (guarded by _mapClickHooked); nothing to undo.
+    -- The onClickMap / InGameMenu.draw hooks are appended once (guarded); nothing to undo.
+    if NaviHelper.dotOverlayId ~= nil and delete ~= nil then
+        delete(NaviHelper.dotOverlayId)
+    end
+    NaviHelper.dotOverlayId = nil
     NaviHelper.arrowOverlayId = nil
     -- Release route line I3D (AutoDrive asset).
     if NaviHelper.routeLineSharedI3D and releaseSharedI3DFile then
@@ -383,6 +403,76 @@ function NaviHelper.onMapClick(frame, element, worldX, worldZ)
     NaviHelper:syncDestShim(slot)
     NaviHelper:invalidateRouteCaches()
     log("map: point added at %.1f, %.1f (route now %d pts)", worldX, worldZ, #slot.route)
+end
+
+-- World -> screen position on the open fullscreen map (inverse of the onClickMap
+-- transform; same formula WayPointGPS uses for its map markers).
+local function menuMapElement()
+    if g_inGameMenu == nil then return nil end
+    return g_inGameMenu.baseIngameMap or g_inGameMenu.ingameMap
+end
+
+local function worldToMenuMapPos(wx, wz)
+    local map = menuMapElement()
+    if map == nil then return nil, nil end
+    local layout = map.fullScreenLayout or map.layout
+    if layout == nil or layout.getMapObjectPosition == nil then return nil, nil end
+    if map.worldCenterOffsetX == nil or map.worldSizeX == nil
+        or map.worldCenterOffsetZ == nil or map.worldSizeZ == nil then return nil, nil end
+    local mapX = (wx + map.worldCenterOffsetX) / map.worldSizeX * 0.5 + 0.25
+    local mapZ = (wz + map.worldCenterOffsetZ) / map.worldSizeZ * 0.5 + 0.25
+    if mapX < 0.25 or mapX > 0.75 or mapZ < 0.25 or mapZ > 0.75 then return nil, nil end
+    local ok, sx, sy = pcall(layout.getMapObjectPosition, layout, mapX, mapZ, 0, 0, 0, true)
+    if ok and sx ~= nil then return sx, sy end
+    return nil, nil
+end
+
+-- Appended to InGameMenu.draw: draw the route points as dots on the open map.
+-- Destination (last point) green, intermediate waypoints orange.
+function NaviHelper.drawMenuMap()
+    if g_inGameMenu == nil or not g_inGameMenu.isOpen then return end
+    -- Only on the map page (don't paint dots over garage/controls/etc.).
+    local mapPage = g_inGameMenu.pageMapOverview or g_inGameMenu.pageMap
+    if mapPage ~= nil and g_inGameMenu.currentPage ~= nil and g_inGameMenu.currentPage ~= mapPage then
+        return
+    end
+
+    local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
+        or (g_currentMission and g_currentMission.controlledVehicle)
+    if v == nil then return end
+    local key = vehicleKey(v)
+    local slot = key and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[key]
+    if not slot or not slot.route or #slot.route == 0 then return end
+
+    if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
+        NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
+    end
+    if NaviHelper.dotOverlayId == nil then return end
+
+    local aspect = g_screenAspectRatio or (16 / 9)
+    local n = #slot.route
+    for i = 1, n do
+        local p = slot.route[i]
+        local sx, sy = worldToMenuMapPos(p.x, p.z)
+        if sx ~= nil then
+            local isDest = (i == n)
+            local w = isDest and 0.013 or 0.010
+            local h = w * aspect
+            -- dark halo for contrast
+            local ow = w + 0.004
+            local oh = ow * aspect
+            setOverlayColor(NaviHelper.dotOverlayId, 0, 0, 0, 0.9)
+            renderOverlay(NaviHelper.dotOverlayId, sx - ow * 0.5, sy - oh * 0.5, ow, oh)
+            -- colored dot
+            if isDest then
+                setOverlayColor(NaviHelper.dotOverlayId, 0.27, 0.77, 0.37, 1)
+            else
+                setOverlayColor(NaviHelper.dotOverlayId, 1.0, 0.62, 0.0, 1)
+            end
+            renderOverlay(NaviHelper.dotOverlayId, sx - w * 0.5, sy - h * 0.5, w, h)
+        end
+    end
+    setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, 1)
 end
 
 -- Mac: Option+M often sends unicode 0xB5 (µ) instead of KEY_M+modifier, so action binding never fires
