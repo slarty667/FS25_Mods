@@ -596,7 +596,10 @@ function NaviHelper:getEffectiveTarget(vehicle)
             local vx, _, vz = self:getVehiclePosition(vehicle)
 
             -- If AutoDrive is actively driving, use its current path.
-            local wayPoints, idx = NaviHelperAD.getCurrentPathFromVehicle and NaviHelperAD.getCurrentPathFromVehicle(vehicle) or nil, nil
+            local wayPoints, idx
+            if NaviHelperAD.getCurrentPathFromVehicle then
+                wayPoints, idx = NaviHelperAD.getCurrentPathFromVehicle(vehicle)
+            end
             if wayPoints and idx and type(idx) == "number" then
                 local path = {}
                 for i = idx, #wayPoints do
@@ -676,11 +679,13 @@ function NaviHelper:updateRoute()
     if NaviHelper.pathDirty then
         slot.pathNodes = nil
         if NaviHelperAD and NaviHelperAD.getPathFromToWorld then
-            local ok, path = pcall(NaviHelperAD.getPathFromToWorld, NaviHelperAD, vx, vz, slot.targetX, slot.targetZ)
+            local ok, path = pcall(NaviHelperAD.getPathFromToWorld, vx, vz, slot.targetX, slot.targetZ)
             if ok and path and #path > 0 then
                 slot.pathNodes = path
                 slot.currentPathIndex = 1
-                log("Route planned: %d nodes", #path)
+                log("Route planned: %d nodes (AD road routing)", #path)
+            else
+                log("Route: no AD path (ok=%s), straight-line fallback", tostring(ok))
             end
         end
         NaviHelper.pathDirty = false
