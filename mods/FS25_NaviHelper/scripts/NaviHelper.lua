@@ -9,6 +9,12 @@ NaviHelper = {}
 NaviHelper.MOD_NAME = "FS25_NaviHelper"
 NaviHelper.LOG_PREFIX = "[NaviHelper]"
 
+-- Capture the mod directory AT FILE LOAD TIME. g_currentModDirectory is only valid
+-- while the script is being sourced; in the loadMap callback it is already nil, which
+-- left NaviHelper.modDirectory empty and broke the map-dot overlay asset load.
+NaviHelper.modDirectory = g_currentModDirectory
+NaviHelper.modName = g_currentModName
+
 -- State: nav aid is OFF until user presses Alt+N (toggle). Then show arrow if target exists, else show notification.
 NaviHelper.uiVisible = true
 NaviHelper.navAidOn = false   -- User activates with Alt+N; if no target we show ingame message
@@ -115,7 +121,7 @@ function NaviHelper:loadMap(name)
     log("loaded drawRouteOnGround=%s effectiveTargetCache=%dms distanceCache=%dms",
         tostring(NaviHelper.drawRouteOnGround),
         NaviHelper.effectiveTargetCacheTime or 0, NaviHelper.distanceCacheTime or 500)
-    NaviHelper.modDirectory = g_currentModDirectory
+    NaviHelper.modDirectory = NaviHelper.modDirectory or g_currentModDirectory
     if not NaviHelper.modDirectory and g_modManager then
         local m = g_modManager:getModByName(NaviHelper.MOD_NAME)
         if m and m.directory then NaviHelper.modDirectory = m.directory end
