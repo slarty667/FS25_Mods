@@ -201,7 +201,58 @@ function RoadStats:consoleProbe()
     return RoadStats.probe()
 end
 
+-- Probe the AI navigationMap: is it a readable bit-vector/density map, at what
+-- resolution, and what does a sample point near the player read? This decides
+-- whether we can A* over the drivability grid (full coverage) instead of splines.
+function RoadStats.probeNav()
+    local m = g_currentMission
+    local ai = m and m.aiSystem
+    if ai == nil then log("NAVPROBE: no aiSystem"); return "no aiSystem" end
+    log("NAVPROBE cellSizeMeters=%s navigationMap=%s infoLayerName=%s infoLayerChannel=%s terrainSize=%s",
+        tostring(ai.cellSizeMeters), tostring(ai.navigationMap), tostring(ai.infoLayerName),
+        tostring(ai.infoLayerChannel), tostring(m.terrainSize))
+    log("NAVPROBE masks: aiDrivable=%s obstacle=%s maxSlope=%s",
+        tostring(ai.aiDrivableCollisionMask), tostring(ai.obstacleCollisionMask), tostring(ai.maxSlopeAngle))
+
+    local fns = { "getBitVectorMapPoint", "getBitVectorMapSize", "getBitVectorMapNumChannels",
+        "getDensityMapData", "getBitVectorMapPointsInRange", "getDensityMapHeightAtWorldPos" }
+    local f = {}
+    for _, n in ipairs(fns) do f[#f + 1] = n .. "=" .. tostring(_G[n] ~= nil) end
+    log("NAVPROBE fns: %s", table.concat(f, ", "))
+
+    local nav = ai.navigationMap
+    local size = nil
+    if _G.getBitVectorMapSize ~= nil and nav ~= nil then
+        local ok, sz = pcall(getBitVectorMapSize, nav)
+        size = ok and sz or nil
+        log("NAVPROBE bitVectorMapSize=%s (ok=%s)", tostring(sz), tostring(ok))
+    end
+
+    -- Sample read at the player/vehicle position (try a couple of call shapes).
+    local v = m.controlledVehicle
+    local node = (v and v.rootNode) or (m.player and m.player.rootNode)
+    if node ~= nil and _G.getBitVectorMapPoint ~= nil and nav ~= nil and size ~= nil and m.terrainSize then
+        local wx, _, wz = getWorldTranslation(node)
+        local res = size
+        local lx = math.floor((wx + m.terrainSize / 2) / m.terrainSize * res)
+        local lz = math.floor((wz + m.terrainSize / 2) / m.terrainSize * res)
+        log("NAVPROBE veh world=%.1f,%.1f -> grid %d,%d (res=%d)", wx, wz, lx, lz, res)
+        local ok1, a = pcall(getBitVectorMapPoint, nav, lx, lz)
+        log("NAVPROBE read(nav,lx,lz)=%s ok=%s", tostring(a), tostring(ok1))
+        local ok2, b = pcall(getBitVectorMapPoint, nav, lx, lz, 0, 1)
+        log("NAVPROBE read(nav,lx,lz,0,1)=%s ok=%s", tostring(b), tostring(ok2))
+    else
+        log("NAVPROBE sample skipped (node=%s size=%s)", tostring(node ~= nil), tostring(size))
+    end
+    return "NavProbe ins Log geschrieben"
+end
+
+function RoadStats:consoleProbeNav()
+    return RoadStats.probeNav()
+end
+
 if addConsoleCommand ~= nil then
     addConsoleCommand("nhRoadStats", "NaviHelper R0: Vanilla-Strassennetz vermessen", "consoleRoadStats", RoadStats)
     addConsoleCommand("nhProbe", "NaviHelper: aiSystem/Feld-Datenquellen dumpen", "consoleProbe", RoadStats)
+    addConsoleCommand("nhProbeNav", "NaviHelper: navigationMap lesbar? Aufloesung + Sample", "consoleProbeNav", RoadStats)
 end
