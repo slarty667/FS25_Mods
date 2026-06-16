@@ -298,7 +298,20 @@ große Snap-Distanzen. Fixes (Reihenfolge offen):
 - evtl. Off-road-Anschluss übers Drivability-/Gelände statt stur Luftlinie.
 Fixes committet bis 1dbb875. Mechanik steht; nächster Hebel = Graph-Vollständigkeit.
 
-## Nächste Schritte
+## POC-H Update 2 (2026-06-17): Kalibrierung gelöst, jetzt Graph-Inhalt
+DURCHBRUCH: Overview↔Engine war ~174° gedreht + 1.551 px/m skaliert (Welt ~2641m >
+Terrain). Per VTRACK-Fahrspur (84 Punkte) mit fit_calib.py (ICP-Similarity) registriert,
+Graph in Engine-Koords neu gebacken. Snapping jetzt START 4m / DEST 9m (vorher 145m+),
+A* 75 Knoten, untere Routenhälfte folgt sauber der Straße. Tooling: tools/roadgraph/
+fit_calib.py, extract.py --calib, Helden.calib.txt. Commit ac0da67.
+VERBLEIBEND (klar umrissen): Graph enthält Feld-INTERNE Wege (gestrichelte Tracks) →
+A* mäandert durch Felder statt Straße. Nächste, fokussierte Schritte:
+1. Feld-Innenspuren aus der Maske filtern (gestrichelt vs durchgezogen; oder Feldpolygone).
+2. Kanten als Straße/Feldweg klassifizieren → A* gewichtet Feldwege teurer.
+3. Snap auf nächste Kante (Projektion), nicht nur Knoten.
+Calibration ist per-Map (jede Map eigene Rotation/Skalierung/Offset) → VTRACK+fit pro Map.
+
+## Nächste Schritte (älter)
 - **POC-H (jetzt-ish):** Helden zu Ende: Spurs prunen + nahe Knoten mergen (sknw-Graph
   ist überspurst), Pixel→Welt-Orientierung gegen bekannte Punkte verifizieren, In-Mod-Loader
   (`scripts/RoadGraphFile.lua` lädt die JSON) + A\* drüber, Route zeichnen. = erste echte
