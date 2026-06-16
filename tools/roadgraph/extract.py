@@ -114,6 +114,8 @@ def main():
     ap.add_argument("--wsz", type=float, default=None, help="worldSizeZ")
     ap.add_argument("--offx", type=float, default=None, help="worldCenterOffsetX")
     ap.add_argument("--offz", type=float, default=None, help="worldCenterOffsetZ")
+    ap.add_argument("--calib", default=None,
+                    help="pixel->engine affine 'a11,a12,a13,a21,a22,a23' (from fit_calib.py Ainv)")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     name = args.name or os.path.basename(os.path.dirname(args.dds)) or "map"
@@ -140,7 +142,16 @@ def main():
     offz = args.offz if args.offz is not None else wsz / 2.0
     print(f"[{name}] projection wsx={wsx} wsz={wsz} offx={offx} offz={offz}")
 
+    calib = None
+    if args.calib:
+        calib = [float(v) for v in args.calib.split(",")]
+        print(f"[{name}] using calib pixel->engine: {calib}")
+
     def to_world(px, py):
+        if calib is not None:
+            wx = calib[0] * px + calib[1] * py + calib[2]
+            wz = calib[3] * px + calib[4] * py + calib[5]
+            return round(wx, 1), round(wz, 1)
         wx = (px / W) * wsx - offx
         wz = (py / H) * wsz - offz
         return round(wx, 1), round(wz, 1)
