@@ -280,8 +280,83 @@ function RoadStats:consoleProbeNav()
     return RoadStats.probeNav()
 end
 
+-- G0 spike: is AISystem:getIsPositionReachable a usable, cheap drivability oracle?
+-- Find its signature, sanity-check at the player's spot, then sweep the map and tally
+-- reachable vs. not — and time it to pick a bake resolution.
+function RoadStats.probeReach()
+    local m = g_currentMission
+    local ai = m and m.aiSystem
+    if ai == nil or ai.getIsPositionReachable == nil then
+        log("REACH: getIsPositionReachable fehlt"); return "getIsPositionReachable fehlt"
+    end
+    local ts = m.terrainSize or 2048
+    local function terrainY(x, z)
+        if _G.getTerrainHeightAtWorldPos ~= nil and m.terrainRootNode ~= nil then
+            local ok, h = pcall(getTerrainHeightAtWorldPos, m.terrainRootNode, x, 0, z)
+            if ok and h ~= nil then return h end
+        end
+        return 0
+    end
+
+    local tx, tz = 0, 0
+    local v = m.controlledVehicle
+    if v ~= nil and v.rootNode ~= nil then local x, _, z = getWorldTranslation(v.rootNode); tx, tz = x, z end
+    local ty = terrainY(tx, tz)
+    log("REACH testpoint world=%.1f,%.1f,%.1f (im Fahrzeug=%s)", tx, ty, tz, tostring(v ~= nil))
+
+    -- candidate signatures -> a (x,z)->value caller each
+    local callers = {
+        { "(x,z)",     function(x, z) return ai:getIsPositionReachable(x, z) end },
+        { "(x,y,z)",   function(x, z) return ai:getIsPositionReachable(x, terrainY(x, z), z) end },
+        { "(x,z,0)",   function(x, z) return ai:getIsPositionReachable(x, z, 0) end },
+        { "(x,y,z,0)", function(x, z) return ai:getIsPositionReachable(x, terrainY(x, z), z, 0) end },
+    }
+    local caller = nil
+    for _, c in ipairs(callers) do
+        local r = { pcall(c[2], tx, tz) }
+        if r[1] then
+            log("REACH sig %s -> OK %s", c[1], tostring(r[2]))
+            if caller == nil then caller = c end
+        else
+            log("REACH sig %s -> ERR %s", c[1], tostring(r[2]))
+        end
+    end
+    if caller == nil then return "REACH: keine Signatur funktioniert" end
+
+    -- sweep + time it
+    local step = 64
+    local half = ts / 2
+    local total, reach, errs = 0, 0, 0
+    local t0 = (_G.getTimeSec ~= nil) and getTimeSec() or nil
+    local wx = -half
+    while wx <= half do
+        local wz = -half
+        while wz <= half do
+            local ok, val = pcall(caller[2], wx, wz)
+            if ok then
+                total = total + 1
+                if val == true or (type(val) == "number" and val ~= 0) then reach = reach + 1 end
+            else
+                errs = errs + 1
+            end
+            wz = wz + step
+        end
+        wx = wx + step
+    end
+    local dt = t0 and (getTimeSec() - t0) or nil
+    log("REACH sweep sig=%s: %d Punkte, %d reachable (%.0f%%), %d Fehler%s",
+        caller[1], total, reach, (total > 0 and reach / total * 100 or 0), errs,
+        dt and string.format(", %.1f ms gesamt (~%.3f ms/Abfrage)", dt * 1000, total > 0 and dt * 1000 / total or 0) or "")
+    return string.format("REACH: %d/%d reachable, sig=%s", reach, total, caller[1])
+end
+
+function RoadStats:consoleProbeReach()
+    return RoadStats.probeReach()
+end
+
 if addConsoleCommand ~= nil then
     addConsoleCommand("nhRoadStats", "NaviHelper R0: Vanilla-Strassennetz vermessen", "consoleRoadStats", RoadStats)
     addConsoleCommand("nhProbe", "NaviHelper: aiSystem/Feld-Datenquellen dumpen", "consoleProbe", RoadStats)
     addConsoleCommand("nhProbeNav", "NaviHelper: navigationMap lesbar? Aufloesung + Sample", "consoleProbeNav", RoadStats)
+    addConsoleCommand("nhProbeReach", "NaviHelper G0: getIsPositionReachable als Drivability-Orakel testen", "consoleProbeReach", RoadStats)
 end

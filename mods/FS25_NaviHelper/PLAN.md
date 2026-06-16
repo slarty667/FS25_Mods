@@ -207,13 +207,49 @@ Pfad-Quelle. AD-Bridge bleibt als optionaler Zweig erhalten.
   Einfahrt-Näherung. Echte Feld-Zufahrt über Feldgrenzen-Geometrie ist ein eigenes,
   schweres Problem (kein Spline-Thema) → nach hinten/optional, nicht Teil des Durchstichs.
 
-## Revidierte Phasen
-- **R0 — Spike (Go/No-Go):** auf Mechet/Helden/Weipersdorf `#roadSplines`, Gesamtlänge
-  und Abdeckung loggen. Entscheidet, ob das Feature überhaupt trägt.
-- **R1 — Graph-Bau (zeitbudgetiert) + Debug-Overlay:** Graph nach Map-Load über Frames
-  bauen, ganzen Graphen auf der Karte zeichnen → visuell gegen Straßen prüfen.
-- **R2 — A\* + Snapping + RoadGraph-first:** ungerichteter Graph, statische Route;
-  Klick ohne AD-Kurs → echte Straßenroute (Boden + Karte) + Fallback-Signal.
-- **R3 (optional/später):** bessere Feld-Zufahrt über Feldgeometrie.
-- **R4 (später):** autonomes Fahren (dann gerichteter Graph/Dual-Roads).
-- **R5 (später):** AD-Kurs-Bootstrap-Export.
+## Revidierte Phasen (Spline-Ansatz — teilweise überholt, siehe unten)
+- **R0 — Spike (Go/No-Go):** ERLEDIGT. roadSplines tragen auf allen drei Maps
+  (Mechet 134 Splines/36 km/~100 %, Helden 19/12,6 km/~65 %, Weipersdorf 13/6 km/~85 %).
+- **R1 — Graph-Bau + Debug-Overlay:** ERLEDIGT (RoadGraph.lua). Aber: nur 1 Kreuzung
+  verschweißt → Graph fragmentiert; UND das Traffic-Netz deckt Dorf/Feldwege nicht ab.
+  → Richtungswechsel, siehe nächster Block.
+- ~~R2 Spline-A\*~~ — verworfen als Primärweg (Coverage-Lücke Dorf/Feldwege).
+
+---
+
+# Richtungswechsel: Grid-Bake-A\* (Nutzer-Entscheidung 2026-06-16)
+
+## Datenquellen-Befund (per Laufzeit-Probe, nhProbe/nhProbeNav)
+- `aiSystem.roadSplines` = Ambient-Traffic-Netz: Hauptstraßen, KEINE Dorf-Innereien/Feldwege.
+- `aiSystem.navigationMap` = **Kollisions-Geometrie** (`navigationCollision`), KEIN lesbarer
+  Bit-Vector (`getBitVectorMapPoint` liefert nil). Engine testet „befahrbar" per Physik
+  gegen `aiDrivableCollisionMask=16384` / `obstacleCollisionMask=32`.
+- **Kein** „Pfad A→B" nach Lua freigelegt (Pathfinding steckt in AI-Jobs/C++).
+- ABER vorhanden: `AISystem:getIsPositionReachable`, interne Planungs-Cost-Map
+  (`setPlanningBitVectorMap`, `consoleCommandAICostmapExport`), und Kollisions-Primitive
+  `overlapBox` / `overlapSphere` / `raycastClosest` (alle =true).
+
+## Ansatz
+Eigenes **Befahrbarkeits-Gitter einmal pro Map vorbacken** (Drivability-Orakel per
+Kollisions-/Reachability-Abfrage), dann **A\* über das Gitter**. Volle Abdeckung
+(Dorf, Höfe, Feldwege, Felder) auf jeder Karte, AD-unabhängig. Rendering/Route-Struktur
+bleibt wie gebaut (pathNodes). RoadGraph/Splines bleiben optionaler Fallback.
+
+## Phasen (jede testbar)
+- **G0 — Orakel-Spike (Go/No-Go):** `getIsPositionReachable`-Signatur klären + an
+  bekannt-befahrbaren vs. Wasser/Gebäude-Punkten testen; Kosten pro Abfrage grob messen
+  (entscheidet Bake-Auflösung). Fallback-Orakel: `overlapBox` mit aiDrivableCollisionMask.
+- **G1 — Bake + Overlay:** Gitter (z.B. 4–8 m Zellen) zeitbudgetiert über Frames backen,
+  als Heatmap auf der Karte zeichnen → visuell gegen befahrbares Gelände prüfen.
+- **G2 — A\* auf dem Gitter:** Klick-Ziel → Pfad über befahrbare Zellen (Boden + Karte),
+  Fallback-Signal. Statische Route, Reroute gethrottelt.
+- **G3 — Glätten + Feld-Einfahrt:** Pfad glätten (keine Treppchen), letzte Zelle →
+  Feldpolygon/teleportNode.
+- **G4/G5 (später):** autonomes Fahren · AD-Kurs-Bootstrap-Export.
+
+## Risiken (für G0/G1 im Auge behalten)
+- Bake-Kosten: 2048 m / Zellgröße. 8 m → 256×256 = 65k Abfragen; 4 m → 512×512 = 262k.
+  Zeitbudgetiert über viele Frames, einmalig. Orakel-Kosten aus G0 bestimmt die Zellgröße.
+- Orakel-Korrektheit: „befahrbar" muss Straße/Feld JA, Wasser/Wald/Gebäude NEIN liefern.
+- Speicher: Gitter als Bitfeld/Byte-Array (65k–262k Einträge) — unkritisch.
+- A\*-Kosten auf großem Gitter: Heuristik + nur Korridor expandieren; einmal pro Ziel.
