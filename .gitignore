@@ -36,3 +36,4 @@ __pycache__/
 
 # fsmods runtime state (per-machine, not versioned)
 .fsmods_state.json
+tmp/roadmap/

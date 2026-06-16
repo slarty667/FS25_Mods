@@ -253,3 +253,42 @@ bleibt wie gebaut (pathNodes). RoadGraph/Splines bleiben optionaler Fallback.
 - Orakel-Korrektheit: „befahrbar" muss Straße/Feld JA, Wasser/Wald/Gebäude NEIN liefern.
 - Speicher: Gitter als Bitfeld/Byte-Array (65k–262k Einträge) — unkritisch.
 - A\*-Kosten auf großem Gitter: Heuristik + nur Korridor expandieren; einmal pro Ziel.
+
+### G0/G1-Befund (verworfen als Primärweg)
+`getIsPositionReachable(x,y,z)` ist spottbillig (~0,0004 ms), aber **zu grob**: liefert
+~92 % „erreichbar" — Feld, Wiese, Waldboden, Straße alles gleich. Findet KEINE Straßen.
+Heatmap bestätigt: fast alles grün. → Grid/Reachable als Straßen-Quelle verworfen.
+
+---
+
+# Richtungswechsel 2: Straßengraph aus dem Overview-Bild (Nutzer-Idee, 2026-06-16)
+
+## Idee
+Offline/async aus dem Map-Overview (`maps/.../overview.dds`, top-down) das Straßennetz
+per Bildverarbeitung extrahieren → Graph pro Map vorbacken → ausliefern. In-Mod nur
+laden + A\*. „Deluxe nur für processed maps", batchbar über ModHub. Folgt echten Straßen
+(weil der Graph die Straßen IST), volle Abdeckung inkl. Dorf/Feldwege.
+
+## Pipeline (Tool: `tools/roadgraph/extract.py`, Python)
+overview.dds → RGB → Straßen-Maske (Farbe) → Cleanup → Skelettieren → sknw-Vektorisierung
+→ Graph (Knoten/Kanten) in Weltkoordinaten als JSON + Debug-Overlay-PNG.
+Deps: pillow, numpy, scikit-image, sknw, networkx.
+
+## Befund (3 Maps getestet)
+- **Helden (sauber stilisiert):** VOLLTREFFER — Netz exakt auf allen Wegen, 905 Knoten,
+  ~13,8 km, sauber vektorisiert. Beweist die Idee.
+- **Mechet:** stilisiert ABER mit Deko-Schreibtisch-Rahmen + kontrastarm → simpler
+  Threshold/Crop überläuft (Rahmen = „Straße"). (NICHT fotoreal — anfangs falsch gelabelt.)
+- **Weipersdorf:** stark texturiert/gemalt, Straßen blass im Wald-Rauschen → Threshold
+  chancenlos.
+- **Lehre:** Overview-Stil ist autorabhängig/uneinheitlich. Robuster General-Extraktor =
+  eigenes CV-Projekt, am ehesten **ML-Straßensegmentierung** (Luftbild→Maske).
+
+## Nächste Schritte
+- **POC-H (jetzt-ish):** Helden zu Ende: Spurs prunen + nahe Knoten mergen (sknw-Graph
+  ist überspurst), Pixel→Welt-Orientierung gegen bekannte Punkte verifizieren, In-Mod-Loader
+  (`scripts/RoadGraphFile.lua` lädt die JSON) + A\* drüber, Route zeichnen. = erste echte
+  „processed map", AD-unabhängig.
+- **Später:** ML-Segmenter für gerahmte/texturierte/fotoreale Overviews; Batch über ModHub;
+  Mechet + Weipersdorf nachziehen.
+- Spline-Router (R1/RoadGraph.lua) + reachable/Grid-Bake bleiben verworfen/Fallback.

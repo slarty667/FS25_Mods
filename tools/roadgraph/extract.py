@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""
+roadgraph/extract.py — offline road-network extraction for FS25 maps.
+
+Reads a map's top-down overview image (overview.dds), isolates the road/track
+pixels by colour, thins them to 1px centrelines, and vectorises the skeleton into
+a graph of nodes (junctions/ends) and edges (polylines). Output: a graph JSON in
+world coordinates plus a debug overlay PNG so the result can be checked visually.
+
+This is the "deluxe" pre-processing step: run once per map (batchable over ModHub),
+ship the resulting graph; the in-game mod just loads it and runs A* — cheap, and it
+follows real roads because the graph *is* the roads.
+
+Usage:
+    python3 extract.py <overview.dds> <out_dir> [--terrain 2048] [--name MapName]
+"""
+
+import sys
+import os
+import json
+import argparse
+import numpy as np
+from PIL import Image
+from skimage.morphology import skeletonize, remove_small_objects, binary_closing, disk, binary_dilation
+import sknw
+
+
+def road_mask(rgb):
+    """Boolean mask of road/track pixels: low saturation, mid brightness, not water."""
+    a = rgb.astype(int)
+    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    sat = mx - mn
+    bright = (r + g + b) // 3
+    water = (b > r + 12) & (b > g + 12)          # bluish -> lakes/rivers
+    mask = (sat < 30) & (bright > 70) & (bright < 232) & (~water)
+    return mask
+
+
+def clean_mask(mask, min_obj=120, close_r=2):
+    """Bridge small gaps, drop small blobs (buildings)."""
+    m = binary_closing(mask, disk(close_r))
+    m = remove_small_objects(m, min_size=min_obj)
+    return m
+
+
+def rdp(points, eps=2.0):
+    """Ramer-Douglas-Peucker polyline simplification (points: list of (x,y))."""
+    if len(points) < 3:
+        return points
+    start, end = np.array(points[0]), np.array(points[-1])
+    line = end - start
+    ll = np.hypot(*line)
+    if ll == 0:
+        d = [np.hypot(*(np.array(p) - start)) for p in points]
+    else:
+        d = [abs(np.cross(line, np.array(p) - start)) / ll for p in points]
+    idx = int(np.argmax(d))
+    if d[idx] > eps:
+        left = rdp(points[:idx + 1], eps)
+        right = rdp(points[idx:], eps)
+        return left[:-1] + right
+    return [points[0], points[-1]]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("dds")
+    ap.add_argument("out_dir")
+    ap.add_argument("--terrain", type=float, default=2048.0)
+    ap.add_argument("--name", default=None)
+    args = ap.parse_args()
+    os.makedirs(args.out_dir, exist_ok=True)
+    name = args.name or os.path.basename(os.path.dirname(args.dds)) or "map"
+
+    rgb = np.asarray(Image.open(args.dds).convert("RGB"))
+    H, W = rgb.shape[:2]
+    print(f"[{name}] overview {W}x{H}, terrain {args.terrain} m")
+
+    mask = clean_mask(road_mask(rgb))
+    print(f"[{name}] road pixels: {mask.mean()*100:.1f}%")
+
+    ske = skeletonize(mask)
+    graph = sknw.build_sknw(ske)
+    print(f"[{name}] skeleton graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
+
+    # pixel (col=x, row=y) -> world. Centered square; z grows downward (row).
+    def to_world(px, py):
+        wx = (px / W - 0.5) * args.terrain
+        wz = (py / H - 0.5) * args.terrain
+        return round(wx, 1), round(wz, 1)
+
+    nodes = {}
+    for n in graph.nodes():
+        y, x = graph.nodes[n]["o"]
+        wx, wz = to_world(x, y)
+        nodes[n] = {"id": int(n), "x": wx, "z": wz}
+
+    edges = []
+    for s, e in graph.edges():
+        pts = graph[s][e]["pts"]  # array of (y, x)
+        poly = [(float(p[1]), float(p[0])) for p in pts]      # (x_px, y_px)
+        poly = rdp(poly, eps=2.5)
+        wpts = [list(to_world(px, py)) for (px, py) in poly]
+        length = sum(np.hypot(wpts[i+1][0]-wpts[i][0], wpts[i+1][1]-wpts[i][1])
+                     for i in range(len(wpts)-1))
+        edges.append({"a": int(s), "b": int(e), "pts": wpts, "len": round(length, 1)})
+
+    out_json = os.path.join(args.out_dir, f"{name}.roadgraph.json")
+    with open(out_json, "w") as f:
+        json.dump({"map": name, "terrain": args.terrain, "image": [W, H],
+                   "nodes": list(nodes.values()), "edges": edges}, f)
+    total_len = round(sum(e["len"] for e in edges))
+    print(f"[{name}] wrote {out_json}: {len(nodes)} nodes, {len(edges)} edges, ~{total_len} m road")
+
+    # debug overlay: dim overview + graph edges (cyan) + nodes (amber)
+    from PIL import ImageDraw
+    base = Image.open(args.dds).convert("RGB").resize((1024, 1024))
+    base = Image.eval(base, lambda v: v // 2)
+    d = ImageDraw.Draw(base)
+    sx, sy = 1024 / W, 1024 / H
+    for s, e in graph.edges():
+        pts = graph[s][e]["pts"]
+        xy = [(p[1]*sx, p[0]*sy) for p in pts]
+        if len(xy) >= 2:
+            d.line(xy, fill=(80, 210, 255), width=1)
+    for n in graph.nodes():
+        y, x = graph.nodes[n]["o"]
+        deg = graph.degree(n)
+        if deg >= 3:
+            d.ellipse([x*sx-3, y*sy-3, x*sx+3, y*sy+3], fill=(255, 160, 0))
+    dbg = os.path.join(args.out_dir, f"{name}.debug.png")
+    base.save(dbg)
+    print(f"[{name}] wrote {dbg}")
+
+
+if __name__ == "__main__":
+    main()
