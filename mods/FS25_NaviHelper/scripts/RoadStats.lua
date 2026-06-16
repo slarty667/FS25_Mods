@@ -228,50 +228,32 @@ function RoadStats.probeNav()
         return "navigationMap nicht lesbar"
     end
 
-    local numCh = 1
-    if _G.getBitVectorMapNumChannels ~= nil then
-        local ok, n = pcall(getBitVectorMapNumChannels, nav)
-        if ok and n ~= nil then numCh = n end
-    end
-    log("NAVPROBE numChannels=%s cellSize=%s terrain=%s -> grid~%dx%d", tostring(numCh), tostring(cs), tostring(ts),
-        math.floor(ts / cs), math.floor(ts / cs))
+    local okC, numCh = pcall(getBitVectorMapNumChannels, nav)
+    log("NAVPROBE numChannels ok=%s val=%s (cellSize=%s terrain=%s -> grid~%dx%d)",
+        tostring(okC), tostring(numCh), tostring(cs), tostring(ts), math.floor(ts / cs), math.floor(ts / cs))
+    numCh = (okC and numCh) or 1
 
-    -- worldX/Z -> grid cell. Coarse sweep over the whole map: tally raw values to
-    -- infer how "drivable" is encoded and how much of the map is non-zero.
-    local function toCell(w) return math.floor((w + ts / 2) / cs) end
-    local step = 64
-    local counts = {}
-    local total, nonzero, readOk = 0, 0, false
-    local half = ts / 2
-    local wx = -half
-    while wx <= half do
-        local wz = -half
-        while wz <= half do
-            local ok, val = pcall(getBitVectorMapPoint, nav, toCell(wx), toCell(wz), 0, numCh)
-            if ok and val ~= nil then
-                readOk = true
-                total = total + 1
-                counts[val] = (counts[val] or 0) + 1
-                if val ~= 0 then nonzero = nonzero + 1 end
-            end
-            wz = wz + step
+    -- Find the correct getBitVectorMapPoint signature: try several call shapes at a
+    -- center cell and log the actual error / returned value for each.
+    local cx = math.floor((0 + ts / 2) / cs)
+    local cz = math.floor((0 + ts / 2) / cs)
+    local function try(label, ...)
+        local res = { pcall(getBitVectorMapPoint, ...) }
+        local ok = res[1]
+        if ok then
+            log("NAVPROBE try %s -> OK val=%s", label, tostring(res[2]))
+        else
+            log("NAVPROBE try %s -> ERR %s", label, tostring(res[2]))
         end
-        wx = wx + step
+        return ok, res[2]
     end
-
-    if not readOk then
-        log("NAVPROBE: Lesen schlug fehl (pcall-Fehler bei getBitVectorMapPoint)")
-        return "navigationMap-Lesen fehlgeschlagen"
-    end
-    -- top distinct values by frequency
-    local pairsList = {}
-    for val, c in pairs(counts) do pairsList[#pairsList + 1] = { val, c } end
-    table.sort(pairsList, function(a, b) return a[2] > b[2] end)
-    local top = {}
-    for i = 1, math.min(8, #pairsList) do top[#top + 1] = pairsList[i][1] .. "x" .. pairsList[i][2] end
-    log("NAVPROBE sweep: %d Punkte, %d nonzero (%.0f%%), %d versch. Werte; top: %s",
-        total, nonzero, (total > 0 and nonzero / total * 100 or 0), #pairsList, table.concat(top, " "))
-    return string.format("NavProbe: %d gelesen, %d nonzero, %d Werte", total, nonzero, #pairsList)
+    log("NAVPROBE center cell = %d,%d", cx, cz)
+    try("(id,x,z)", nav, cx, cz)
+    try("(id,x,z,numCh)", nav, cx, cz, numCh)
+    try("(id,x,z,0,numCh)", nav, cx, cz, 0, numCh)
+    try("(id,x,z,1)", nav, cx, cz, 1)
+    try("(id,x,z,0,1)", nav, cx, cz, 0, 1)
+    return "NavProbe-Signaturtest ins Log"
 end
 
 function RoadStats:consoleProbeNav()
