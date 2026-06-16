@@ -494,6 +494,33 @@ local function mapDiag(fmt, ...)
     log("drawMenuMap diag: " .. fmt, ...)
 end
 
+-- R1 debug overlay: project every RoadGraph node onto the open map. Normal nodes
+-- small cyan, junctions (degree>=3) larger amber. Nodes only — the road lines are
+-- implied by node density; this is enough to verify coverage + junction welding.
+function NaviHelper._drawRoadGraph(aspect)
+    local id = NaviHelper.dotOverlayId
+    local nodes, adj = RoadGraph.nodes, RoadGraph.adj
+    local w = 0.0035
+    local h = w * aspect
+    local jw = 0.007
+    local jh = jw * aspect
+    for i = 1, #nodes do
+        local nd = nodes[i]
+        local sx, sy = worldToMenuMapPos(nd.x, nd.z)
+        if sx ~= nil then
+            local deg = (adj[i] ~= nil) and #adj[i] or 0
+            if deg >= 3 then
+                setOverlayColor(id, 1.0, 0.62, 0.0, 0.95)
+                renderOverlay(id, sx - jw * 0.5, sy - jh * 0.5, jw, jh)
+            else
+                setOverlayColor(id, 0.20, 0.75, 0.95, 0.8)
+                renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h)
+            end
+        end
+    end
+    setOverlayColor(id, 1, 1, 1, 1)
+end
+
 -- Appended to InGameMenu.draw: draw the route points as dots on the open map.
 -- Destination (last point) green, intermediate waypoints orange. pcall-wrapped so
 -- a draw error can never take down the whole in-game menu.
@@ -506,6 +533,19 @@ function NaviHelper._drawMenuMapInner()
     if g_inGameMenu == nil or not g_inGameMenu.isOpen then return end
     if not isMenuMapPageActive() then return end  -- only on the map page, not calendar/prices/etc.
 
+    -- Overlay (lazy create). Shared by the route dots and the R1 graph debug overlay.
+    if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
+        NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
+    end
+    if NaviHelper.dotOverlayId == nil then return end
+
+    local aspect = g_screenAspectRatio or (16 / 9)
+
+    -- R1 debug overlay: draw the whole RoadGraph (toggle with console command "nhGraph").
+    if RoadGraph ~= nil and RoadGraph.debugDraw and RoadGraph.ready and RoadGraph.nodes ~= nil then
+        NaviHelper._drawRoadGraph(aspect)
+    end
+
     local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
         or (g_currentMission and g_currentMission.controlledVehicle)
     if v == nil then return end
@@ -513,29 +553,6 @@ function NaviHelper._drawMenuMapInner()
     local slot = key and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[key]
     if not slot or not slot.route or #slot.route == 0 then return end
 
-    -- Overlay (lazy create). Report the path/id once so we know if the asset loaded.
-    if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
-        NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
-        mapDiag("created overlay id=%s from %s", tostring(NaviHelper.dotOverlayId),
-            tostring(NaviHelper.modDirectory) .. "textures/dot.png")
-    end
-    if NaviHelper.dotOverlayId == nil then
-        mapDiag("no overlay (modDir=%s createImageOverlay=%s)",
-            tostring(NaviHelper.modDirectory), tostring(createImageOverlay ~= nil))
-        return
-    end
-
-    -- Map element + offsets present?
-    local map = menuMapElement()
-    if map ~= nil then
-        mapDiag("map el ok: offX=%s sizeX=%s layout=%s fsLayout=%s",
-            tostring(map.worldCenterOffsetX), tostring(map.worldSizeX),
-            tostring(map.layout ~= nil), tostring(map.fullScreenLayout ~= nil))
-    else
-        mapDiag("no map element (baseIngameMap/ingameMap nil)")
-    end
-
-    local aspect = g_screenAspectRatio or (16 / 9)
     local n = #slot.route
 
     -- Route line: follow the actual computed path (road-routed via AutoDrive where the
@@ -999,6 +1016,7 @@ end
 
 function NaviHelper:update(dt)
     if RoadStats and RoadStats.maybeAutoLog then pcall(RoadStats.maybeAutoLog) end
+    if RoadGraph and RoadGraph.stepBuild and not RoadGraph.ready then pcall(function() RoadGraph:stepBuild() end) end
     local ok, err = pcall(function()
         local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
             or (g_currentMission and g_currentMission.controlledVehicle)
