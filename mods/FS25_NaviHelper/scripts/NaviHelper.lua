@@ -135,6 +135,9 @@ function NaviHelper:loadMap(name)
     -- Try to load AutoDrive's line.i3d for route line (our scene node, so it won't be cleared by their manager).
     NaviHelper:tryLoadAutoDriveRouteLineI3D()
 
+    -- Load the pre-baked road graph for this map (if a processed-map file exists).
+    if RoadGraphFile and RoadGraphFile.load then pcall(RoadGraphFile.load) end
+
     -- Hook the in-game map frame's click callback. It hands us WORLD coordinates
     -- directly (frame, element, worldX, worldZ) — robust, unlike a self-rolled
     -- screen->world conversion. Ctrl+click = add point, Shift+click = remove last.
@@ -601,6 +604,36 @@ if addConsoleCommand ~= nil then
     addConsoleCommand("nhReachMap", "NaviHelper G1: Befahrbarkeits-Heatmap an/aus", "consoleReachMap", NaviHelper)
 end
 
+-- ---- POC-H: draw the loaded pre-baked road graph on the map (orientation check) ----
+NaviHelper.roadFileOn = false
+
+function NaviHelper._drawRoadFile(aspect)
+    if RoadGraphFile == nil or not RoadGraphFile.ready or RoadGraphFile.edges == nil then return end
+    local id = NaviHelper.dotOverlayId
+    local w = 0.0035
+    local h = w * aspect
+    setOverlayColor(id, 0.20, 0.75, 0.95, 0.8)
+    for k = 1, #RoadGraphFile.edges do
+        local pts = RoadGraphFile.edges[k].pts
+        for i = 1, #pts, 2 do
+            local sx, sy = worldToMenuMapPos(pts[i], pts[i + 1])
+            if sx ~= nil then renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h) end
+        end
+    end
+    setOverlayColor(id, 1, 1, 1, 1)
+end
+
+function NaviHelper:consoleRoadFile()
+    NaviHelper.roadFileOn = not NaviHelper.roadFileOn
+    local n = (RoadGraphFile and RoadGraphFile.nodes) and #RoadGraphFile.nodes or 0
+    return "road graph overlay " .. (NaviHelper.roadFileOn and "AN" or "aus")
+        .. " (map=" .. tostring(RoadGraphFile and RoadGraphFile.mapKey) .. ", " .. n .. " Knoten)"
+end
+
+if addConsoleCommand ~= nil then
+    addConsoleCommand("nhRoadFile", "NaviHelper POC-H: geladenen Straßengraph auf Karte zeichnen", "consoleRoadFile", NaviHelper)
+end
+
 -- Appended to InGameMenu.draw: draw the route points as dots on the open map.
 -- Destination (last point) green, intermediate waypoints orange. pcall-wrapped so
 -- a draw error can never take down the whole in-game menu.
@@ -629,6 +662,11 @@ function NaviHelper._drawMenuMapInner()
     -- G1 debug overlay: drivability heatmap (toggle with console command "nhReachMap").
     if NaviHelper.reachMapOn and NaviHelper.reachCells ~= nil then
         NaviHelper._drawReachMap(aspect)
+    end
+
+    -- POC-H overlay: pre-baked road graph (toggle with console command "nhRoadFile").
+    if NaviHelper.roadFileOn then
+        NaviHelper._drawRoadFile(aspect)
     end
 
     local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
@@ -1032,7 +1070,7 @@ function NaviHelper:buildRoutePath(route, vx, vz)
     for i = 1, #route do seq[#seq + 1] = { x = route[i].x, z = route[i].z } end
 
     local nodes = {}
-    local adRouted, straightSegs = 0, 0
+    local roadRouted, adRouted, straightSegs = 0, 0, 0
     local function push(p)
         local last = nodes[#nodes]
         if last and math.abs(last.x - p.x) < 0.5 and math.abs(last.z - p.z) < 0.5 then return end
@@ -1042,7 +1080,13 @@ function NaviHelper:buildRoutePath(route, vx, vz)
     for i = 1, #seq - 1 do
         local a, b = seq[i], seq[i + 1]
         local seg
-        if NaviHelperAD and NaviHelperAD.getPathFromToWorld then
+        -- Priority 1: pre-baked road graph (processed map) — follows real roads.
+        if RoadGraphFile and RoadGraphFile.ready and RoadGraphFile.findPath then
+            local ok, path = pcall(RoadGraphFile.findPath, a.x, a.z, b.x, b.z)
+            if ok and path and #path > 0 then seg = path; roadRouted = roadRouted + 1 end
+        end
+        -- Priority 2: AutoDrive (optional).
+        if seg == nil and NaviHelperAD and NaviHelperAD.getPathFromToWorld then
             local ok, path = pcall(NaviHelperAD.getPathFromToWorld, a.x, a.z, b.x, b.z)
             if ok and path and #path > 0 then seg = path; adRouted = adRouted + 1 end
         end
@@ -1055,8 +1099,8 @@ function NaviHelper:buildRoutePath(route, vx, vz)
         end
     end
 
-    log("Route built: %d nodes from %d segment(s) — %d AD-routed, %d straight",
-        #nodes, #seq - 1, adRouted, straightSegs)
+    log("Route built: %d nodes from %d segment(s) — %d road-graph, %d AD, %d straight",
+        #nodes, #seq - 1, roadRouted, adRouted, straightSegs)
     return (#nodes > 0) and nodes or nil
 end
 

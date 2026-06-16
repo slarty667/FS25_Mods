@@ -8,6 +8,7 @@ source(Utils.getFilename("scripts/Settings.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/AutoDriveBridge.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/RoadStats.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/RoadGraph.lua", g_currentModDirectory))
+source(Utils.getFilename("scripts/RoadGraphFile.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/NaviHelper.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/NaviHelperVehicle.lua", g_currentModDirectory))
 
