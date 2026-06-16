@@ -542,7 +542,8 @@ function NaviHelper.isReachable(x, z)
     return ok and (val == true or (type(val) == "number" and val ~= 0))
 end
 
--- Sample the whole map once, cache reachable cells for the overlay.
+-- Sample the whole map once. Store EVERY cell with its reachable flag so the overlay
+-- can show green (reachable) vs red (not) — to judge how well the oracle discriminates.
 function NaviHelper.buildReachMap(spacing)
     spacing = spacing or 24
     local m = g_currentMission
@@ -554,16 +555,16 @@ function NaviHelper.buildReachMap(spacing)
         local z = -half
         while z <= half do
             total = total + 1
-            if NaviHelper.isReachable(x, z) then
-                reach = reach + 1
-                cells[#cells + 1] = { x, z }
-            end
+            local ok = NaviHelper.isReachable(x, z)
+            if ok then reach = reach + 1 end
+            cells[#cells + 1] = { x, z, ok }
             z = z + spacing
         end
         x = x + spacing
     end
     NaviHelper.reachCells = cells
-    log("reach heatmap: %d/%d reachable @ %.0fm spacing (%d Punkte gecached)", reach, total, spacing, #cells)
+    log("reach heatmap: %d/%d reachable (%.0f%%) @ %.0fm spacing", reach, total,
+        (total > 0 and reach / total * 100 or 0), spacing)
 end
 
 function NaviHelper._drawReachMap(aspect)
@@ -572,10 +573,17 @@ function NaviHelper._drawReachMap(aspect)
     local id = NaviHelper.dotOverlayId
     local w = 0.004
     local h = w * aspect
-    setOverlayColor(id, 0.27, 0.77, 0.37, 0.55)
     for i = 1, #cells do
-        local sx, sy = worldToMenuMapPos(cells[i][1], cells[i][2])
-        if sx ~= nil then renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h) end
+        local c = cells[i]
+        local sx, sy = worldToMenuMapPos(c[1], c[2])
+        if sx ~= nil then
+            if c[3] then
+                setOverlayColor(id, 0.27, 0.77, 0.37, 0.5)   -- reachable = green
+            else
+                setOverlayColor(id, 0.95, 0.20, 0.20, 0.9)   -- not reachable = red
+            end
+            renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h)
+        end
     end
     setOverlayColor(id, 1, 1, 1, 1)
 end
