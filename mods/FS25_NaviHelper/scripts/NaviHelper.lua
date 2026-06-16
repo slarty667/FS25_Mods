@@ -1176,7 +1176,8 @@ function NaviHelper:update(dt)
     -- VTRACK: log vehicle position while driving on roads, for offline overview<->world
     -- calibration (fit the transform so the driven track lands on the overview roads).
     pcall(function()
-        local v = g_currentMission and g_currentMission.controlledVehicle
+        local v = (g_currentMission and g_currentMission.controlledVehicle)
+            or NaviHelper.lastActiveVehicle
         if v == nil or v.rootNode == nil then return end
         local t = g_currentMission.time or 0
         if NaviHelper._vtrackAt == nil then NaviHelper._vtrackAt = 0 end
