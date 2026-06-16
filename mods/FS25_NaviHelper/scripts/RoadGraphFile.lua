@@ -171,11 +171,22 @@ function RoadGraphFile.findPath(sx, sz, dx, dz)
     local nodePath = RoadGraphFile.astar(sNode, dNode)
     if nodePath == nil then return nil end
 
-    local out = { { x = sx, y = 0, z = sz } }
+    -- Terrain height per point so the ground line sits ON the ground (y=0 = sea level
+    -- would render the line through/under the terrain as scattered streaks).
+    local terrainNode = g_currentMission and g_currentMission.terrainRootNode
+    local function ty(x, z)
+        if getTerrainHeightAtWorldPos ~= nil and terrainNode ~= nil then
+            local ok, h = pcall(getTerrainHeightAtWorldPos, terrainNode, x, 0, z)
+            if ok and h ~= nil then return h end
+        end
+        return 0
+    end
+
+    local out = { { x = sx, y = ty(sx, sz), z = sz } }
     local function push(x, z)
         local last = out[#out]
         if last and math.abs(last.x - x) < 0.5 and math.abs(last.z - z) < 0.5 then return end
-        out[#out + 1] = { x = x, y = 0, z = z }
+        out[#out + 1] = { x = x, y = ty(x, z), z = z }
     end
     for i = 1, #nodePath - 1 do
         local seg = edgePtsOriented(nodePath[i], nodePath[i + 1])
@@ -187,5 +198,6 @@ function RoadGraphFile.findPath(sx, sz, dx, dz)
         end
     end
     push(dx, dz)
+    -- y already set per point via terrain height.
     return out
 end
