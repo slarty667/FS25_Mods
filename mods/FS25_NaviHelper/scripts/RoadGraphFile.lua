@@ -17,7 +17,8 @@ RoadGraphFile.adj = nil        -- { i = { {to=j, cost=d, e=k}, ... } }
 RoadGraphFile.edges = nil      -- { k = {a,b,len,pts={x,z,...}} }
 RoadGraphFile._grid = nil      -- spatial hash "cx:cz" -> { nodeId }
 RoadGraphFile.cellSize = 32
-RoadGraphFile.maxSnap = 80     -- m: if nearest node is farther, no road path
+RoadGraphFile.maxSnap = 300    -- m: snap start/dest to nearest road node within this (field clicks are off-road)
+RoadGraphFile._diag = 0
 
 local function log(fmt, ...)
     if Logging and Logging.info then Logging.info(RoadGraphFile.LOG_PREFIX .. " " .. fmt, ...) end
@@ -167,9 +168,15 @@ function RoadGraphFile.findPath(sx, sz, dx, dz)
     if not RoadGraphFile.ready then return nil end
     local sNode = RoadGraphFile.findNearestNode(sx, sz)
     local dNode = RoadGraphFile.findNearestNode(dx, dz)
-    if sNode == nil or dNode == nil then return nil end
-    local nodePath = RoadGraphFile.astar(sNode, dNode)
-    if nodePath == nil then return nil end
+    local nodePath = (sNode and dNode) and RoadGraphFile.astar(sNode, dNode) or nil
+    if RoadGraphFile._diag < 6 then
+        RoadGraphFile._diag = RoadGraphFile._diag + 1
+        local sd = sNode and math.sqrt((RoadGraphFile.nodes[sNode].x - sx)^2 + (RoadGraphFile.nodes[sNode].z - sz)^2) or -1
+        local dd = dNode and math.sqrt((RoadGraphFile.nodes[dNode].x - dx)^2 + (RoadGraphFile.nodes[dNode].z - dz)^2) or -1
+        log("findPath: sNode=%s(%.0fm) dNode=%s(%.0fm) astar=%s",
+            tostring(sNode), sd, tostring(dNode), dd, nodePath and (#nodePath .. " nodes") or "nil")
+    end
+    if sNode == nil or dNode == nil or nodePath == nil then return nil end
 
     -- Terrain height per point so the ground line sits ON the ground (y=0 = sea level
     -- would render the line through/under the terrain as scattered streaks).
