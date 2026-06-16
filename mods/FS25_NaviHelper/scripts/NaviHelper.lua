@@ -998,6 +998,7 @@ function NaviHelper:updateRoute()
 end
 
 function NaviHelper:update(dt)
+    if RoadStats and RoadStats.maybeAutoLog then pcall(RoadStats.maybeAutoLog) end
     local ok, err = pcall(function()
         local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
             or (g_currentMission and g_currentMission.controlledVehicle)
