@@ -284,6 +284,20 @@ Deps: pillow, numpy, scikit-image, sknw, networkx.
 - **Lehre:** Overview-Stil ist autorabhängig/uneinheitlich. Robuster General-Extraktor =
   eigenes CV-Projekt, am ehesten **ML-Straßensegmentierung** (Luftbild→Maske).
 
+## POC-H Ergebnis (2026-06-17) — Pipeline läuft end-to-end, Extraktion zu lückenhaft
+Die ganze Kette funktioniert: extract.py → roadgraphs/Helden.lua (721 Knoten) →
+RoadGraphFile.lua (laden + A* + nearest-snap) → buildRoutePath (road-graph-first) →
+Bodenlinie auf Geländehöhe. Im Log: `astar=7 nodes`, `Route built: … road-graph`.
+Routenpunkte gegen das Overview geplottet (outputs/route_on_overview.png): der
+A*-Teil liegt **korrekt auf der Straßen-Kreuzung**. ABER: Fahrzeug (37 m) und Klick-Ziel
+(131 m) snappen weit auf den nächsten erfassten Knoten → lange Luftlinien-Stummel quer
+übers Feld. Ursache: simpler Farb-Threshold **verfehlt dünne Feldwege/Dorfpfade**, daher
+große Snap-Distanzen. Fixes (Reihenfolge offen):
+- bessere Straßen-Erkennung (ML-Segmentierung ODER getunte CV) für vollständigere Tracks,
+- Snapping richtungsbewusst (nicht nach hinten),
+- evtl. Off-road-Anschluss übers Drivability-/Gelände statt stur Luftlinie.
+Fixes committet bis 1dbb875. Mechanik steht; nächster Hebel = Graph-Vollständigkeit.
+
 ## Nächste Schritte
 - **POC-H (jetzt-ish):** Helden zu Ende: Spurs prunen + nahe Knoten mergen (sknw-Graph
   ist überspurst), Pixel→Welt-Orientierung gegen bekannte Punkte verifizieren, In-Mod-Loader
