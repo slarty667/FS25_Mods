@@ -634,6 +634,25 @@ if addConsoleCommand ~= nil then
     addConsoleCommand("nhRoadFile", "NaviHelper POC-H: geladenen Straßengraph auf Karte zeichnen", "consoleRoadFile", NaviHelper)
 end
 
+-- Log the map's world<->image projection params (needed to re-export the road graph
+-- with the correct overview-pixel->world mapping). Open the map first.
+function NaviHelper:consoleMapInfo()
+    local map = menuMapElement()
+    local m = g_currentMission
+    if map == nil then return "Karte zuerst oeffnen (ESC-Map), dann nhMapInfo" end
+    local s = string.format("MAPINFO offsetX=%s offsetZ=%s sizeX=%s sizeZ=%s terrain=%s title=%s",
+        tostring(map.worldCenterOffsetX), tostring(map.worldCenterOffsetZ),
+        tostring(map.worldSizeX), tostring(map.worldSizeZ),
+        tostring(m and m.terrainSize),
+        tostring((m and m.missionInfo and m.missionInfo.mapTitle) or (m and m.mapTitle)))
+    log("%s", s)
+    return s
+end
+
+if addConsoleCommand ~= nil then
+    addConsoleCommand("nhMapInfo", "NaviHelper: Karten-Projektionsparameter loggen", "consoleMapInfo", NaviHelper)
+end
+
 -- Appended to InGameMenu.draw: draw the route points as dots on the open map.
 -- Destination (last point) green, intermediate waypoints orange. pcall-wrapped so
 -- a draw error can never take down the whole in-game menu.

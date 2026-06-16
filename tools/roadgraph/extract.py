@@ -109,6 +109,11 @@ def main():
     ap.add_argument("out_dir")
     ap.add_argument("--terrain", type=float, default=2048.0)
     ap.add_argument("--name", default=None)
+    # Map world<->image projection (from in-game nhMapInfo). Default = terrain-centered.
+    ap.add_argument("--wsx", type=float, default=None, help="worldSizeX")
+    ap.add_argument("--wsz", type=float, default=None, help="worldSizeZ")
+    ap.add_argument("--offx", type=float, default=None, help="worldCenterOffsetX")
+    ap.add_argument("--offz", type=float, default=None, help="worldCenterOffsetZ")
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     name = args.name or os.path.basename(os.path.dirname(args.dds)) or "map"
@@ -127,10 +132,17 @@ def main():
     added, removed = prune_and_stitch(graph, min_spur_px=10.0 * px_per_m, merge_px=5.0 * px_per_m)
     print(f"[{name}] cleanup: +{added} stitch, -{removed} spurs -> {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges")
 
-    # pixel (col=x, row=y) -> world. Centered square; z grows downward (row).
+    # pixel (col=x, row=y) -> world. Use the map's real projection if given, else
+    # assume the overview covers the terrain square centered (offset = size/2).
+    wsx = args.wsx if args.wsx is not None else args.terrain
+    wsz = args.wsz if args.wsz is not None else args.terrain
+    offx = args.offx if args.offx is not None else wsx / 2.0
+    offz = args.offz if args.offz is not None else wsz / 2.0
+    print(f"[{name}] projection wsx={wsx} wsz={wsz} offx={offx} offz={offz}")
+
     def to_world(px, py):
-        wx = (px / W - 0.5) * args.terrain
-        wz = (py / H - 0.5) * args.terrain
+        wx = (px / W) * wsx - offx
+        wz = (py / H) * wsz - offz
         return round(wx, 1), round(wz, 1)
 
     nodes = {}
