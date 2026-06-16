@@ -169,12 +169,11 @@ function RoadGraphFile.findPath(sx, sz, dx, dz)
     local sNode = RoadGraphFile.findNearestNode(sx, sz)
     local dNode = RoadGraphFile.findNearestNode(dx, dz)
     local nodePath = (sNode and dNode) and RoadGraphFile.astar(sNode, dNode) or nil
-    if RoadGraphFile._diag < 6 then
-        RoadGraphFile._diag = RoadGraphFile._diag + 1
+    do
         local sd = sNode and math.sqrt((RoadGraphFile.nodes[sNode].x - sx)^2 + (RoadGraphFile.nodes[sNode].z - sz)^2) or -1
         local dd = dNode and math.sqrt((RoadGraphFile.nodes[dNode].x - dx)^2 + (RoadGraphFile.nodes[dNode].z - dz)^2) or -1
-        log("findPath: sNode=%s(%.0fm) dNode=%s(%.0fm) astar=%s",
-            tostring(sNode), sd, tostring(dNode), dd, nodePath and (#nodePath .. " nodes") or "nil")
+        log("findPath: start=%.0f,%.0f dest=%.0f,%.0f sNode=%s(%.0fm) dNode=%s(%.0fm) astar=%s",
+            sx, sz, dx, dz, tostring(sNode), sd, tostring(dNode), dd, nodePath and (#nodePath .. " nodes") or "nil")
     end
     if sNode == nil or dNode == nil or nodePath == nil then return nil end
 

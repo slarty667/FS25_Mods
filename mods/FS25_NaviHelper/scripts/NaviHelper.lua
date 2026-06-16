@@ -1121,9 +1121,9 @@ function NaviHelper:buildRoutePath(route, vx, vz)
 
     log("Route built: %d nodes from %d segment(s) — %d road-graph, %d AD, %d straight",
         #nodes, #seq - 1, roadRouted, adRouted, straightSegs)
-    -- One-shot dump of the route geometry (to plot against the overview offline).
-    if not NaviHelper._routeDumped then
-        NaviHelper._routeDumped = true
+    -- Dump the route geometry every rebuild (buildRoutePath only runs on a real change,
+    -- not per frame) so we can plot the ACTUAL route the player drove against the overview.
+    do
         local parts = {}
         for i = 1, #nodes do parts[#parts + 1] = string.format("%.0f,%.0f", nodes[i].x, nodes[i].z) end
         log("ROUTEDUMP %s", table.concat(parts, " "))
