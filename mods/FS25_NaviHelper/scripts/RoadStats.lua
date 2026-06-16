@@ -249,11 +249,31 @@ function RoadStats.probeNav()
     end
     log("NAVPROBE center cell = %d,%d", cx, cz)
     try("(id,x,z)", nav, cx, cz)
-    try("(id,x,z,numCh)", nav, cx, cz, numCh)
-    try("(id,x,z,0,numCh)", nav, cx, cz, 0, numCh)
-    try("(id,x,z,1)", nav, cx, cz, 1)
     try("(id,x,z,0,1)", nav, cx, cz, 0, 1)
-    return "NavProbe-Signaturtest ins Log"
+
+    -- navigationMap is collision geometry, not a readable bitmap. Last hope: does the
+    -- AISystem class (or globals) expose a drivability/pathfinding method we can use?
+    local function fnKeys(t)
+        local out = {}
+        if type(t) == "table" then
+            for k, v in pairs(t) do if type(v) == "function" then out[#out + 1] = tostring(k) end end
+            table.sort(out)
+        end
+        return out
+    end
+    if _G.AISystem ~= nil then
+        log("NAVPROBE AISystem methods: %s", table.concat(fnKeys(AISystem), ", "))
+    end
+    local mt = getmetatable(ai)
+    if mt ~= nil and type(mt.__index) == "table" then
+        log("NAVPROBE ai instance methods: %s", table.concat(fnKeys(mt.__index), ", "))
+    end
+    -- collision-based drivability primitives that a grid-bake could (slowly) use
+    local prims = { "overlapBox", "overlapSphere", "collisionRaycast", "raycastClosest", "AIVehicleUtil" }
+    local p = {}
+    for _, n in ipairs(prims) do p[#p + 1] = n .. "=" .. tostring(_G[n] ~= nil) end
+    log("NAVPROBE collision prims: %s", table.concat(p, ", "))
+    return "NavProbe-Methodendump ins Log"
 end
 
 function RoadStats:consoleProbeNav()
