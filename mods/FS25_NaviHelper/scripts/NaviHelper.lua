@@ -1121,6 +1121,13 @@ function NaviHelper:buildRoutePath(route, vx, vz)
 
     log("Route built: %d nodes from %d segment(s) — %d road-graph, %d AD, %d straight",
         #nodes, #seq - 1, roadRouted, adRouted, straightSegs)
+    -- One-shot dump of the route geometry (to plot against the overview offline).
+    if not NaviHelper._routeDumped then
+        NaviHelper._routeDumped = true
+        local parts = {}
+        for i = 1, #nodes do parts[#parts + 1] = string.format("%.0f,%.0f", nodes[i].x, nodes[i].z) end
+        log("ROUTEDUMP %s", table.concat(parts, " "))
+    end
     return (#nodes > 0) and nodes or nil
 end
 
