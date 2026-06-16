@@ -620,6 +620,22 @@ function NaviHelper._drawRoadFile(aspect)
             if sx ~= nil then renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h) end
         end
     end
+
+    -- Calibration markers at KNOWN world coords (to diagnose the projection):
+    -- (0,0)=rot=Mitte, (+900,0)=gruen=Ost, (-900,0)=blau=West, (0,+900)=gelb=Sued, (0,-900)=weiss=Nord.
+    local refs = {
+        { 0, 0, 0.95, 0.15, 0.15 }, { 900, 0, 0.2, 0.9, 0.2 }, { -900, 0, 0.2, 0.4, 1.0 },
+        { 0, 900, 1.0, 0.85, 0.0 }, { 0, -900, 1.0, 1.0, 1.0 },
+    }
+    local rw = 0.02
+    local rh = rw * aspect
+    for _, r in ipairs(refs) do
+        local sx, sy = worldToMenuMapPos(r[1], r[2])
+        if sx ~= nil then
+            setOverlayColor(id, r[3], r[4], r[5], 1)
+            renderOverlay(id, sx - rw * 0.5, sy - rh * 0.5, rw, rh)
+        end
+    end
     setOverlayColor(id, 1, 1, 1, 1)
 end
 
