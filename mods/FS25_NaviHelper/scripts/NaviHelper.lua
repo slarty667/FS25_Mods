@@ -521,6 +521,78 @@ function NaviHelper._drawRoadGraph(aspect)
     setOverlayColor(id, 1, 1, 1, 1)
 end
 
+-- ---- G1: drivability heatmap (verify the getIsPositionReachable oracle) ----------
+NaviHelper.reachMapOn = false
+NaviHelper.reachCells = nil   -- cached list of reachable {x,z} world points
+
+local function terrainHeight(x, z)
+    local m = g_currentMission
+    if getTerrainHeightAtWorldPos ~= nil and m ~= nil and m.terrainRootNode ~= nil then
+        local ok, h = pcall(getTerrainHeightAtWorldPos, m.terrainRootNode, x, 0, z)
+        if ok and h ~= nil then return h end
+    end
+    return 0
+end
+
+-- Drivability oracle: AISystem:getIsPositionReachable(x, y, z) (cheap; ~0.0004 ms).
+function NaviHelper.isReachable(x, z)
+    local ai = g_currentMission and g_currentMission.aiSystem
+    if ai == nil or ai.getIsPositionReachable == nil then return false end
+    local ok, val = pcall(ai.getIsPositionReachable, ai, x, terrainHeight(x, z), z)
+    return ok and (val == true or (type(val) == "number" and val ~= 0))
+end
+
+-- Sample the whole map once, cache reachable cells for the overlay.
+function NaviHelper.buildReachMap(spacing)
+    spacing = spacing or 24
+    local m = g_currentMission
+    local ts = (m and m.terrainSize) or 2048
+    local half = ts / 2
+    local cells, total, reach = {}, 0, 0
+    local x = -half
+    while x <= half do
+        local z = -half
+        while z <= half do
+            total = total + 1
+            if NaviHelper.isReachable(x, z) then
+                reach = reach + 1
+                cells[#cells + 1] = { x, z }
+            end
+            z = z + spacing
+        end
+        x = x + spacing
+    end
+    NaviHelper.reachCells = cells
+    log("reach heatmap: %d/%d reachable @ %.0fm spacing (%d Punkte gecached)", reach, total, spacing, #cells)
+end
+
+function NaviHelper._drawReachMap(aspect)
+    local cells = NaviHelper.reachCells
+    if cells == nil then return end
+    local id = NaviHelper.dotOverlayId
+    local w = 0.004
+    local h = w * aspect
+    setOverlayColor(id, 0.27, 0.77, 0.37, 0.55)
+    for i = 1, #cells do
+        local sx, sy = worldToMenuMapPos(cells[i][1], cells[i][2])
+        if sx ~= nil then renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h) end
+    end
+    setOverlayColor(id, 1, 1, 1, 1)
+end
+
+function NaviHelper:consoleReachMap()
+    NaviHelper.reachMapOn = not NaviHelper.reachMapOn
+    if NaviHelper.reachMapOn and NaviHelper.reachCells == nil then
+        NaviHelper.buildReachMap(24)
+    end
+    return "reach heatmap " .. (NaviHelper.reachMapOn and "AN" or "aus")
+        .. (NaviHelper.reachCells and (" (" .. #NaviHelper.reachCells .. " Punkte)") or "")
+end
+
+if addConsoleCommand ~= nil then
+    addConsoleCommand("nhReachMap", "NaviHelper G1: Befahrbarkeits-Heatmap an/aus", "consoleReachMap", NaviHelper)
+end
+
 -- Appended to InGameMenu.draw: draw the route points as dots on the open map.
 -- Destination (last point) green, intermediate waypoints orange. pcall-wrapped so
 -- a draw error can never take down the whole in-game menu.
@@ -544,6 +616,11 @@ function NaviHelper._drawMenuMapInner()
     -- R1 debug overlay: draw the whole RoadGraph (toggle with console command "nhGraph").
     if RoadGraph ~= nil and RoadGraph.debugDraw and RoadGraph.ready and RoadGraph.nodes ~= nil then
         NaviHelper._drawRoadGraph(aspect)
+    end
+
+    -- G1 debug overlay: drivability heatmap (toggle with console command "nhReachMap").
+    if NaviHelper.reachMapOn and NaviHelper.reachCells ~= nil then
+        NaviHelper._drawReachMap(aspect)
     end
 
     local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
