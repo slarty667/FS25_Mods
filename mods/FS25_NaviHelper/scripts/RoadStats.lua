@@ -133,6 +133,75 @@ function RoadStats:consoleRoadStats()
     return RoadStats.logNow("console")
 end
 
+-- ---------------------------------------------------------------------------
+-- Data-source probe: dump what FS25 exposes Lua-side beyond roadSplines, to decide
+-- whether richer road/field-access data exists (village streets, field tracks).
+-- ---------------------------------------------------------------------------
+
+local function tableKeys(t, wantFunctions)
+    local out = {}
+    for k, v in pairs(t) do
+        local ty = type(v)
+        if (wantFunctions and ty == "function") or (not wantFunctions and ty ~= "function") then
+            local extra = ""
+            if ty == "table" then
+                local n = 0
+                for _ in pairs(v) do n = n + 1 end
+                extra = " #" .. n
+            end
+            out[#out + 1] = tostring(k) .. "(" .. ty .. extra .. ")"
+        end
+    end
+    table.sort(out)
+    return out
+end
+
+function RoadStats.probe()
+    log("PROBE start ----------------------------------------")
+    local m = g_currentMission
+    local ai = m and m.aiSystem
+    if ai ~= nil then
+        log("aiSystem fields: %s", table.concat(tableKeys(ai, false), ", "))
+        local mt = getmetatable(ai)
+        if mt ~= nil and type(mt.__index) == "table" then
+            log("aiSystem methods: %s", table.concat(tableKeys(mt.__index, true), ", "))
+        end
+    else
+        log("no aiSystem")
+    end
+
+    -- Globals / engine functions of interest (pathfinder, spline, navigation).
+    local names = {
+        "AIPathFinder", "PathFinderModule", "createPathFinder", "AISystem",
+        "AINetwork", "getSplinePosition", "getSplineLength", "getSplineTime",
+        "AITargetNode", "AIVehicleUtil", "PathfindingModule", "g_densityMapHeightManager",
+    }
+    local found = {}
+    for _, n in ipairs(names) do found[#found + 1] = n .. "=" .. tostring(_G[n] ~= nil) end
+    log("globals: %s", table.concat(found, ", "))
+
+    -- Sample field: does FS25 expose an access point / entrance per field?
+    local fm = g_fieldManager
+    if fm ~= nil then
+        local fields = (type(fm.getFields) == "function" and fm:getFields()) or fm.fields
+        if type(fields) == "table" then
+            for _, f in pairs(fields) do
+                if type(f) == "table" then
+                    log("sample field fields: %s", table.concat(tableKeys(f, false), ", "))
+                    break
+                end
+            end
+        end
+    end
+    log("PROBE end ------------------------------------------")
+    return "Probe ins Log geschrieben"
+end
+
+function RoadStats:consoleProbe()
+    return RoadStats.probe()
+end
+
 if addConsoleCommand ~= nil then
     addConsoleCommand("nhRoadStats", "NaviHelper R0: Vanilla-Strassennetz vermessen", "consoleRoadStats", RoadStats)
+    addConsoleCommand("nhProbe", "NaviHelper: aiSystem/Feld-Datenquellen dumpen", "consoleProbe", RoadStats)
 end
