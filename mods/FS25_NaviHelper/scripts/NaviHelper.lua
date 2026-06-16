@@ -1173,6 +1173,23 @@ end
 function NaviHelper:update(dt)
     if RoadStats and RoadStats.maybeAutoLog then pcall(RoadStats.maybeAutoLog) end
     if RoadGraph and RoadGraph.stepBuild and not RoadGraph.ready then pcall(function() RoadGraph:stepBuild() end) end
+    -- VTRACK: log vehicle position while driving on roads, for offline overview<->world
+    -- calibration (fit the transform so the driven track lands on the overview roads).
+    pcall(function()
+        local v = g_currentMission and g_currentMission.controlledVehicle
+        if v == nil or v.rootNode == nil then return end
+        local t = g_currentMission.time or 0
+        if NaviHelper._vtrackAt == nil then NaviHelper._vtrackAt = 0 end
+        if t - NaviHelper._vtrackAt < 1500 then return end
+        local x, _, z = getWorldTranslation(v.rootNode)
+        if NaviHelper._vtrackLast then
+            local dx, dz = x - NaviHelper._vtrackLast[1], z - NaviHelper._vtrackLast[2]
+            if dx * dx + dz * dz < 9 then return end  -- moved < 3m -> skip (parked)
+        end
+        NaviHelper._vtrackAt = t
+        NaviHelper._vtrackLast = { x, z }
+        log("VTRACK %.1f %.1f", x, z)
+    end)
     local ok, err = pcall(function()
         local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
             or (g_currentMission and g_currentMission.controlledVehicle)
