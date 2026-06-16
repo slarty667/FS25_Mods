@@ -98,3 +98,122 @@ Distanz-/Reached-Code unverändert läuft (statt 5+ Fundstellen zu migrieren).
 Nur `scripts/NaviHelper.lua` (+ evtl. 1–2 l10n-Keys für Modus-Notification).
 `AutoDriveBridge.lua` unverändert (defensiv genug). Keine neue Datei.
 Settings: Wegpunkt-Erreichen-Schwelle (~8m) als Tuning-Wert ins Settings-Modul.
+
+---
+
+# Vanilla-Spline-Router — NaviHelper-eigenes Pathfinding (Plan, 2026-06-16)
+
+Stand: Plan-Modus (software-planning). SSoT. Kein Code bis Abnahme.
+
+## Ziel & Anspruch
+NaviHelper soll auf **jeder** Karte routen — ohne dass der Spieler AutoDrive-Kurse
+aufzeichnet. Quelle: das mit der Map ausgelieferte Vanilla-Straßennetz
+(`g_currentMission.aiSystem.roadSplines`). Anspruch: **NaviHelper first, AutoDrive
+optional/zweite Wahl.**
+
+## Entscheidungen (Nutzer, 2026-06-16)
+- **Modus:** jetzt nur Route zeigen (Nav-Aid), **bald auch autonom fahren** →
+  Router muss von Rendering UND Fahren entkoppelt bleiben (reine Pfad-Funktion).
+- **Priorität:** eigener Vanilla-Router ZUERST, AD nur optional dahinter.
+- **Ziele abseits Straßen:** idealerweise die Feld-Einfahrt treffen; wenn nicht
+  ermittelbar → nächster Straßenpunkt + Luftlinie aufs Feld.
+- **Zukunft:** denselben Graphen als Bootstrap-Grundnetz für AD-Kurse exportieren
+  (Spieler legt dann „nur" noch Haltestellen fest + optimiert).
+
+## Machbarkeit (am AD-Quellcode verifiziert)
+- `aiSystem.roadSplines` existiert; `getSplineLength` / `getSplinePosition(spline, t∈[0,1])`
+  liefern die Geometrie. AD liest das in `TrafficSplineUtils.adParseSplines`.
+- Graph-Bau-Rezept von AD adaptierbar: Spline sampeln (adaptive Dichte — in Kurven
+  enger), Dual-Roads via deckungsgleiche Start/End-Punkte, Kreuzungen via
+  zusammenfallende Spline-Enden zusammenschweißen.
+- **OFFEN (Spikes):** (1) Sind `roadSplines` auf Mechet/Helden/Weipersdorf
+  überhaupt befüllt? = Go/No-Go. (2) Gibt es eine Feld-Einfahrt-API? AD nutzt keine
+  → Default-Fallback „nächster Knoten".
+
+## Architektur
+Neues, **reines** Modul `RoadGraph` (keine Render-/Fahr-Seiteneffekte):
+- `build()` — `roadSplines` → Knoten (gesampelt) + Kanten (aufeinanderfolgend +
+  Kreuzungs-Welds). Einmal pro Map, **lazy** beim ersten Routen-Request.
+  Spatial-Index (Grid-Buckets) für schnelles `findNearestNode`.
+- `findNearestNode(x,z)` — mit Max-Snap-Distanz.
+- `findPath(sx,sz, dx,dz)` — beide Enden snappen, **A\*** über den Graphen,
+  Welt-Polyline zurück; echte Start/Ziel-Punkte als Luftlinien-Anschluss vorn/hinten.
+
+Router-Priorität in `buildRoutePath` (pro Segment): **RoadGraph → AD (optional) →
+Luftlinie.** Das Rendering (HUD / Karten-Dots / Bodenlinie) bleibt unverändert und
+konsumiert weiter `pathNodes`. Entkopplung = späterer Fahr-Controller und
+AD-Bootstrap-Export hängen an denselben `pathNodes` bzw. demselben Graphen.
+
+## Dateien
+- **NEU** `scripts/RoadGraph.lua` (Graph, A\*, Spatial-Index). In `register.lua`
+  VOR `NaviHelper.lua` sourcen.
+- **EDIT** `scripts/NaviHelper.lua`: `buildRoutePath` nutzt RoadGraph zuerst;
+  `loadMap` stößt Lazy-Build an; Diagnose-Logs.
+- `AutoDriveBridge.lua` unverändert (bleibt optionaler Zweig).
+
+## Datenfluss
+Klick → `route[]` → `updateRoute` → `buildRoutePath` (pro Segment: RoadGraph.findPath
+→ AD → Linie) → `pathNodes` → draw (Boden + Karte)  [+ später: Fahr-Controller].
+
+## Fehlerquellen
+- `roadSplines` leer → kein Graph → AD/Linie-Fallback (geloggt).
+- Graph-Baukosten auf großer Map → lazy + Sampling + Spatial-Index; ggf.
+  Zeitbudget/chunked (Risiko, bewusst später).
+- Getrennte Komponenten (Start/Ziel auf verschiedenen „Inseln") → A\* scheitert →
+  Fallback.
+- Snap-Distanz zu groß → langer Luftlinien-Stummel; cappen.
+- Weld-Toleranz Kreuzungen: zu eng = zerrissener Graph, zu lose = Fehlverbindung.
+  Tunebar (Settings).
+
+## Phasen (jede für sich testbar)
+- **R0 — Spike:** `#roadSplines` + Beispielgeometrie auf Mechet/Helden/Weipersdorf
+  loggen. **Go/No-Go.**
+- **R1 — Graph-Bau + Debug-Overlay:** ganzen Graphen auf der Karte zeichnen →
+  visuell gegen die Straßen prüfen.
+- **R2 — A\* + Snapping + RoadGraph-first:** Klick auf einer Map OHNE AD-Kurs →
+  echte Straßenroute (Boden + Karte).
+- **R3 — Feld-Einfahrt:** Spike API; sonst Nächster-Knoten-Fallback.
+- **R4 (separat, später):** autonomes Fahren (Fahr-Controller auf `pathNodes`).
+- **R5 (separat, später):** AD-Kurs-Bootstrap-Export aus dem Graphen.
+
+## Berührt nicht
+Map-Route/Editor (P2/P3, P4) bleibt. Router ist nur eine zusätzliche, priorisierte
+Pfad-Quelle. AD-Bridge bleibt als optionaler Zweig erhalten.
+
+## Kritik-Fixes (Stage-4-Review, eingearbeitet)
+- **(hoch) R0 verschärfen:** nicht „roadSplines befüllt ja/nein", sondern auf den
+  ECHTEN Maps des Nutzers (Mechet, Helden, Weipersdorf) messen: Anzahl Splines,
+  Gesamtlänge, und ob das Netz Felder/Höfe erschließt oder nur eine Hauptstraße ist.
+  Begründung: dieselben Hobby-Mapper, die keine AD-Kurse pflegen, setzen oft auch
+  das Vanilla-AI-Netz nur lückenhaft. Wenn R0 dünn ausfällt, ist die ehrliche Lösung
+  ein leichtgewichtiges „selbst ein paar Wegpunkte setzen", nicht R1–R3 für die Tonne.
+- **(hoch) Kein onclick-Freeze:** Graph-Bau NICHT synchron an den ersten Klick
+  koppeln (= sichtbarer Hänger genau bei Nutzeraktion). Stattdessen zeitlich
+  entkoppelt: Build nach Map-Load über mehrere Frames in `update` mit Zeitbudget
+  (z.B. ~2 ms/Frame), Routing erst wenn „ready", bis dahin Luftlinie. Sample-Auflösung
+  = Parameter, der die Knotenzahl deckelt.
+- **(mittel) Reroute-Policy = statisch:** Route wird EINMAL beim Zielsetzen berechnet,
+  bleibt bis neues Ziel. Off-Route-Neuberechnung nur hart gethrottelt (Abstand zur
+  Linie > Schwelle, max. alle N s) — damit sind A\*-Kosten ein Non-Issue.
+- **(mittel) Welding robust:** exaktes/quasi-exaktes Endpunkt-Matching wie AD (kleine
+  Epsilon-Toleranz), KEIN großzügiges Fuzzy-Snapping; Y-Differenz separat hart
+  begrenzen (Brücke/Unterführung dürfen nicht verschmelzen, sonst routet's in den Fluss).
+- **(mittel) Graph ungerichtet, Dual-Road-Detection weglassen:** Richtung ist fürs
+  reine Anzeigen (Mensch am Lenkrad) irrelevant. Dual-Road/Richtung erst bei R4
+  (autonomes Fahren). Spart AD-Komplexität, die R0–R3 nicht braucht.
+- **(niedrig) Sichtbares Fallback-Signal:** Rendering unterscheidet echte Straßenroute
+  vs. Luftlinien-Fallback (Farbe/gestrichelt) — sonst wirkt „mal Route, mal nicht" kaputt.
+- **(niedrig) R3 entschärft:** der Luftlinien-Anschluss Knoten→Klickpunkt IST schon die
+  Einfahrt-Näherung. Echte Feld-Zufahrt über Feldgrenzen-Geometrie ist ein eigenes,
+  schweres Problem (kein Spline-Thema) → nach hinten/optional, nicht Teil des Durchstichs.
+
+## Revidierte Phasen
+- **R0 — Spike (Go/No-Go):** auf Mechet/Helden/Weipersdorf `#roadSplines`, Gesamtlänge
+  und Abdeckung loggen. Entscheidet, ob das Feature überhaupt trägt.
+- **R1 — Graph-Bau (zeitbudgetiert) + Debug-Overlay:** Graph nach Map-Load über Frames
+  bauen, ganzen Graphen auf der Karte zeichnen → visuell gegen Straßen prüfen.
+- **R2 — A\* + Snapping + RoadGraph-first:** ungerichteter Graph, statische Route;
+  Klick ohne AD-Kurs → echte Straßenroute (Boden + Karte) + Fallback-Signal.
+- **R3 (optional/später):** bessere Feld-Zufahrt über Feldgeometrie.
+- **R4 (später):** autonomes Fahren (dann gerichteter Graph/Dual-Roads).
+- **R5 (später):** AD-Kurs-Bootstrap-Export.
