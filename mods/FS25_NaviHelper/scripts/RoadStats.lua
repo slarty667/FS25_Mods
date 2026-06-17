@@ -354,9 +354,73 @@ function RoadStats:consoleProbeReach()
     return RoadStats.probeReach()
 end
 
+-- Scan the scene graph (+ ai/traffic systems) for spline nodes — the WayPointGPS way.
+-- Reports how much real road-spline data this map actually exposes, by name category,
+-- so we know (before committing) whether non-traffic streets exist as splines here.
+function RoadStats.probeSplines()
+    local found = {}        -- {name, len}
+    local total, scanned = 0, 0
+    local cat = { road = 0, field = 0, water = 0, other = 0 }
+    local sumLen = 0
+
+    local function isSplineShape(node)
+        if type(node) ~= "number" or node <= 0 then return false end
+        if entityExists ~= nil then local ok, e = pcall(entityExists, node); if not ok or not e then return false end end
+        if getHasClassId ~= nil and ClassIds ~= nil and ClassIds.SHAPE ~= nil then
+            local ok, isShape = pcall(getHasClassId, node, ClassIds.SHAPE)
+            if not ok or not isShape then return false end
+        end
+        if getSplineLength == nil then return false end
+        local ok, len = pcall(getSplineLength, node)
+        if not ok or type(len) ~= "number" or len <= 0 then return false end
+        return true, len
+    end
+
+    local function consider(node, path)
+        local ok, len = isSplineShape(node)
+        if not ok then return end
+        total = total + 1; sumLen = sumLen + len
+        local p = string.lower(path)
+        if p:find("field") or p:find("workarea") then cat.field = cat.field + 1
+        elseif p:find("water") or p:find("river") or p:find("rail") then cat.water = cat.water + 1
+        elseif p:find("road") or p:find("street") or p:find("drive") or p:find("traffic") or p:find("vehicle") or p:find("ai") then cat.road = cat.road + 1
+        else cat.other = cat.other + 1 end
+        if #found < 30 then found[#found + 1] = string.format("%s(%.0fm)", path, len) end
+    end
+
+    local function walk(node, path, depth)
+        if node == nil or depth > 14 or scanned > 60000 then return end
+        scanned = scanned + 1
+        local name = (getName ~= nil and select(1, pcall(getName, node))) and getName(node) or "?"
+        local np = (path ~= "" and (path .. "/" .. name)) or name
+        consider(node, np)
+        if getNumOfChildren == nil or getChildAt == nil then return end
+        local ok, n = pcall(getNumOfChildren, node)
+        if not ok or type(n) ~= "number" then return end
+        for i = 0, n - 1 do
+            local okc, c = pcall(getChildAt, node, i)
+            if okc and c ~= nil then walk(c, np, depth + 1) end
+        end
+    end
+
+    local m = g_currentMission
+    for _, r in ipairs({ m and m.terrainRootNode, m and m.rootNode, m and m.mapRootNode }) do
+        if r ~= nil then walk(r, "", 0) end
+    end
+    log("SPLINES: %d Splines gesamt, ~%.0fm Laenge | road/street=%d field=%d water/rail=%d other=%d (Knoten gescannt=%d)",
+        total, sumLen, cat.road, cat.field, cat.water, cat.other, scanned)
+    for i = 1, math.min(#found, 30) do log("  spline: %s", found[i]) end
+    return string.format("SPLINES: %d gesamt, road=%d field=%d other=%d -> Log", total, cat.road, cat.field, cat.other)
+end
+
+function RoadStats:consoleProbeSplines()
+    return RoadStats.probeSplines()
+end
+
 if addConsoleCommand ~= nil then
     addConsoleCommand("nhRoadStats", "NaviHelper R0: Vanilla-Strassennetz vermessen", "consoleRoadStats", RoadStats)
     addConsoleCommand("nhProbe", "NaviHelper: aiSystem/Feld-Datenquellen dumpen", "consoleProbe", RoadStats)
     addConsoleCommand("nhProbeNav", "NaviHelper: navigationMap lesbar? Aufloesung + Sample", "consoleProbeNav", RoadStats)
     addConsoleCommand("nhProbeReach", "NaviHelper G0: getIsPositionReachable als Drivability-Orakel testen", "consoleProbeReach", RoadStats)
+    addConsoleCommand("nhSplines", "NaviHelper: Szenen-Graph nach Strassen-Splines scannen (WayPointGPS-Weg)", "consoleProbeSplines", RoadStats)
 end
