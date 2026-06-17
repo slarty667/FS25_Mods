@@ -14,10 +14,10 @@ GreyRouter.LOG_PREFIX = "[NaviHelper/Grey]"
 GreyRouter.cell = 3.0        -- m, grid cell size (fine -> junctions/narrow streets resolve)
 GreyRouter.maxSnap = 70.0    -- m, snap start/dest to nearest drivable cell within this
 GreyRouter.roadDepthMax = 0.1 -- terrain sink-depth <= this = paved/compacted road (measured)
-GreyRouter.maxIters = 120000 -- A* safety cap (finer grid -> more cells)
-GreyRouter.maxOffroad = 4    -- cells of non-road the path may bridge (gate/seam ~12m)
-GreyRouter.offroadPenalty = 6 -- cost multiplier for non-road cells (prefer road strongly)
-GreyRouter._grey = {}        -- cell "cx:cz" -> bool (terrain is static; cache for the session)
+GreyRouter.maxIters = 200000 -- A* safety cap (cost-gradient explores more road before open)
+GreyRouter.openPenalty = 60  -- step-cost multiplier for drivable-but-not-road cells
+                             -- (verge/forest/meadow/dirt-track): allowed, but roads win
+GreyRouter._grey = {}        -- cell "cx:cz" -> class string (terrain static; cache per session)
 GreyRouter._cacheCount = 0
 
 local function log(fmt, ...)
@@ -92,52 +92,71 @@ function isFieldAt(wx, wz)
     return false
 end
 
--- Driveable lane test (two measured signals), only off-field:
---   1) sink-depth <= roadDepthMax  -> paved/compacted road, yard (grey, soft lakebed excluded)
---   2) dark reddish-brown earth    -> soft dirt field-track the depth signal misses
--- Field interiors (same brown colour) are removed by the field exclusion first.
--- (Name kept as isGreyAt for existing call sites.)
-local function isGreyAt(wx, wz)
+-- Classify a world point into a routing class:
+--   "road"    paved/compacted lane or yard (sink-depth <= roadDepthMax) -> cheap
+--   "open"    drivable ground: verge/forest/meadow/dirt-track (dark brown earth) -> costly
+--   "blocked" field interior, water/lake bed, anything else -> impassable
+-- Road vs open is what makes the route HUG roads instead of cutting across the verge,
+-- even though the verge is technically driveable.
+local function classifyAt(wx, wz)
     local r, g, b, d = attrAt(wx, wz)
-    if d == nil then return false end
-    if isFieldAt(wx, wz) then return false end
-    if d <= GreyRouter.roadDepthMax then return true end
-    if isDirtBrown(r, g, b) then return true end
-    return false
+    if d == nil then return "blocked" end
+    if isFieldAt(wx, wz) then return "blocked" end
+    if d <= GreyRouter.roadDepthMax then return "road" end
+    if isDirtBrown(r, g, b) then return "open" end
+    return "blocked"
 end
 
--- Is cell (cx,cz) drivable? Grey if a path TOUCHES the cell — sample centre + 4 inner
--- points so thin/diagonal roads dilate into a connected chain of cells. Cached.
-function GreyRouter.cellGrey(cx, cz)
+-- Class of cell (cx,cz): sample centre + 4 inner points; best (road > open > blocked)
+-- wins so thin/diagonal lanes dilate into a connected chain. Cached as a class string.
+function GreyRouter.cellClass(cx, cz)
     local key = cx .. ":" .. cz
     local c = GreyRouter._grey[key]
     if c ~= nil then return c end
     local cs = GreyRouter.cell
     local wx, wz = (cx + 0.5) * cs, (cz + 0.5) * cs
     local off = cs * 0.45
-    local grey = isGreyAt(wx, wz)
-        or isGreyAt(wx - off, wz) or isGreyAt(wx + off, wz)
-        or isGreyAt(wx, wz - off) or isGreyAt(wx, wz + off)
-    GreyRouter._grey[key] = grey
+    local best = "blocked"
+    local pts = { { wx, wz }, { wx - off, wz }, { wx + off, wz }, { wx, wz - off }, { wx, wz + off } }
+    for _, p in ipairs(pts) do
+        local cl = classifyAt(p[1], p[2])
+        if cl == "road" then best = "road"; break
+        elseif cl == "open" and best ~= "road" then best = "open" end
+    end
+    GreyRouter._grey[key] = best
     GreyRouter._cacheCount = GreyRouter._cacheCount + 1
-    return grey
+    return best
 end
 
+-- Back-compat: drivable = not blocked. Used by the overlay and snapping.
+function GreyRouter.cellGrey(cx, cz)
+    return GreyRouter.cellClass(cx, cz) ~= "blocked"
+end
+function GreyRouter.cellRoad(cx, cz)
+    return GreyRouter.cellClass(cx, cz) == "road"
+end
+
+-- Snap to the nearest ROAD cell within maxSnap; fall back to nearest drivable cell.
+-- Preferring road as start/end keeps the route anchored to the network.
 function GreyRouter.findNearestGreyCell(x, z)
     local cell = GreyRouter.cell
     local scx, scz = math.floor(x / cell), math.floor(z / cell)
-    if GreyRouter.cellGrey(scx, scz) then return scx, scz end
     local maxRing = math.ceil(GreyRouter.maxSnap / cell)
+    local fbx, fbz = nil, nil   -- first drivable (open) fallback
+    if GreyRouter.cellRoad(scx, scz) then return scx, scz end
+    if fbx == nil and GreyRouter.cellGrey(scx, scz) then fbx, fbz = scx, scz end
     for ring = 1, maxRing do
         for dx = -ring, ring do
             for dz = -ring, ring do
                 if math.abs(dx) == ring or math.abs(dz) == ring then
-                    if GreyRouter.cellGrey(scx + dx, scz + dz) then return scx + dx, scz + dz end
+                    local cx, cz = scx + dx, scz + dz
+                    if GreyRouter.cellRoad(cx, cz) then return cx, cz end
+                    if fbx == nil and GreyRouter.cellGrey(cx, cz) then fbx, fbz = cx, cz end
                 end
             end
         end
     end
-    return nil
+    return fbx, fbz
 end
 
 -- binary min-heap on .f
@@ -165,18 +184,20 @@ local function heapPop(h)
     return top
 end
 
+-- Cost-gradient A*: every non-blocked cell is traversable, but an "open" step costs
+-- openPenalty x more than a "road" step, so the path hugs the road network and only
+-- dips onto the verge for short, unavoidable connectors (vanilla / WayPointGPS style).
 function GreyRouter.astar(scx, scz, dcx, dcz)
     local cell = GreyRouter.cell
-    local maxOff, offPen = GreyRouter.maxOffroad, GreyRouter.offroadPenalty
+    local openPen = GreyRouter.openPenalty
     local function heur(cx, cz) local dx, dz = cx - dcx, cz - dcz; return math.sqrt(dx * dx + dz * dz) * cell end
-    -- state = cell + how many non-grey cells in a row we've crossed (so gaps stay bounded)
-    local function K(cx, cz, run) return cx .. ":" .. cz .. ":" .. run end
-    local startKey = K(scx, scz, 0)
+    local function K(cx, cz) return cx .. ":" .. cz end
+    local startKey = K(scx, scz)
     local g = { [startKey] = 0 }
     local came = {}
     local closed = {}
     local open = {}
-    heapPush(open, { f = heur(scx, scz), key = startKey, cx = scx, cz = scz, run = 0 })
+    heapPush(open, { f = heur(scx, scz), key = startKey, cx = scx, cz = scz })
     local iters = 0
     while #open > 0 and iters < GreyRouter.maxIters do
         iters = iters + 1
@@ -198,18 +219,17 @@ function GreyRouter.astar(scx, scz, dcx, dcz)
                 for dz = -1, 1 do
                     if not (dx == 0 and dz == 0) then
                         local nx, nz = cur.cx + dx, cur.cz + dz
-                        local grey = GreyRouter.cellGrey(nx, nz)
-                        local newrun = grey and 0 or (cur.run + 1)
-                        if newrun <= maxOff then
-                            local base = (dx == 0 or dz == 0) and cell or (cell * 1.41421)
-                            local stepCost = grey and base or (base * offPen)
-                            local nk = K(nx, nz, newrun)
+                        local cls = GreyRouter.cellClass(nx, nz)
+                        if cls ~= "blocked" then
+                            local nk = K(nx, nz)
                             if not closed[nk] then
+                                local base = (dx == 0 or dz == 0) and cell or (cell * 1.41421)
+                                local stepCost = (cls == "road") and base or (base * openPen)
                                 local tentative = g[cur.key] + stepCost
                                 if tentative < (g[nk] or 1e18) then
                                     g[nk] = tentative
                                     came[nk] = { key = cur.key, cx = cur.cx, cz = cur.cz }
-                                    heapPush(open, { f = tentative + heur(nx, nz), key = nk, cx = nx, cz = nz, run = newrun })
+                                    heapPush(open, { f = tentative + heur(nx, nz), key = nk, cx = nx, cz = nz })
                                 end
                             end
                         end
@@ -221,20 +241,23 @@ function GreyRouter.astar(scx, scz, dcx, dcz)
     return nil, iters
 end
 
--- Line-of-sight: does the straight line (x1,z1)->(x2,z2) stay on drivable (grey) cells?
-local function losGrey(x1, z1, x2, z2)
+-- Line-of-sight along ROAD only: the straight line must stay on road cells. Smoothing
+-- uses this so corners are cut only along the road network -- never across the verge
+-- (which is driveable but must not be straightened over, or the route leaves the road).
+local function losRoad(x1, z1, x2, z2)
     local cell = GreyRouter.cell
     local d = math.sqrt((x2 - x1) ^ 2 + (z2 - z1) ^ 2)
     local steps = math.max(1, math.floor(d / (cell * 0.6)))
     for i = 0, steps do
         local t = i / steps
         local x, z = x1 + (x2 - x1) * t, z1 + (z2 - z1) * t
-        if not GreyRouter.cellGrey(math.floor(x / cell), math.floor(z / cell)) then return false end
+        if not GreyRouter.cellRoad(math.floor(x / cell), math.floor(z / cell)) then return false end
     end
     return true
 end
 
--- String-pulling: greedily skip to the farthest still-visible point -> straight, smooth path.
+-- String-pulling: greedily skip to the farthest road-visible point -> straight, smooth
+-- path on roads. Open connectors stay as their A* cells (short, so jaggedness is minor).
 local function smooth(pts)
     if #pts <= 2 then return pts end
     local out = { pts[1] }
@@ -242,7 +265,7 @@ local function smooth(pts)
     while i < #pts do
         local j = #pts
         while j > i + 1 do
-            if losGrey(pts[i].x, pts[i].z, pts[j].x, pts[j].z) then break end
+            if losRoad(pts[i].x, pts[i].z, pts[j].x, pts[j].z) then break end
             j = j - 1
         end
         out[#out + 1] = pts[j]
