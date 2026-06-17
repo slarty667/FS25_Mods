@@ -353,3 +353,43 @@ Calibration ist per-Map (jede Map eigene Rotation/Skalierung/Offset) → VTRACK+
 - **Später:** ML-Segmenter für gerahmte/texturierte/fotoreale Overviews; Batch über ModHub;
   Mechet + Weipersdorf nachziehen.
 - Spline-Router (R1/RoadGraph.lua) + reachable/Grid-Bake bleiben verworfen/Fallback.
+
+---
+
+## 2026-06-17 — Kritik + Recherche-Pass (Wendepunkt)
+
+Nach wiederholtem Farb-/materialId-Scheitern auf Helden: Kritiker + Recherche-Agent angesetzt.
+
+**Kernbefund Kritiker:** Farb-Klassifikation ist Sackgasse — rekonstruiert Topologie (Strassennetz)
+aus Pixel-Aussehen, das keine Topologie kennt. Helden = Worst Case fuer jede Live-Methode
+(alles materialId 7, keine Surface-Namen, Wege nur Textur, Wasser-API tot). Empfehlung: Splines/
+Engine nutzen, Rest ehrlich als kurzen Stub. Aufhoeren 100% aus falschem Signal zu pressen.
+
+**Zwei neue Hebel aus der Recherche (vorher uebersehen):**
+
+1. **Tiefe/Haerte als Strassen-Signal.** Der 4. Rueckgabewert von getTerrainAttributesAtWorldPos
+   ist NICHT Alpha, sondern Boden-Einsink-Tiefe. Basisspiel (WheelsUtil.getGroundType):
+   depth <= 0.1 = befestigte Strasse, 0.1-0.8 = harter Boden, >0.8 = weich. Semantisches
+   Signal, das Farbe/materialId nie hatten. -> per nhDeep messen ob es Strasse von Wiese trennt.
+
+2. **Engine-Navigations-Agent (Lua-aufrufbar).** createVehicleNavigationAgent ->
+   setVehicleNavigationAgentTarget(agentId,x,y,z,dir) -> getVehicleNavigationAgentNextCurvature
+   -> Status DRIVING/PLANNING/BLOCKED/TARGET_REACHED/NOT_REACHABLE. Plant ueber die Engine-
+   Road-Costmap (rasterte Splines), Kreuzungen in C++, jede Karte. = wie Vanilla KI-Helfer auf
+   Strassen zu einem Punkt faehrt. Deckt aber nur das Spline-Netz ab (Helden: 12.6km/64%),
+   NICHT textur-only Feldwege. Kann das Fahrzeug auch SELBST fahren (driveAlongCurvature).
+
+**Wasser (Recherche):** kein per-Punkt getWaterY*. Basis-Pattern: terrainHeight < g_currentMission.waterY
+(guard ~= nil). Farb-Wasser-Erkennung verwerfen.
+
+**Andere GPS-Mods:** realGPS = nur PDA-Anzeige. CourseplayGps = faehrt nur bestehende CP-Kurse ab.
+WayPointGPS = einziger echter Router: AutoDrive-Graph-Import > selbstgebauter Spline-Graph+A* >
+Farb-Fallback (genau der Teil der auf Helden scheitert). KEINER nutzt depth<=0.1 oder den Nav-Agent.
+
+**Offene Fragen -> Diagnose nhDeep (RoadStats.lua) gebaut, misst:**
+- depth-Verteilung auf Splines (Strasse) vs off-field/on-land (Wiese+Hof+Weg) -> trennt depth?
+- g_currentMission.waterY vorhanden? terrainHeight<waterY am Fahrzeug?
+- Nav-Agent-API-Globals vorhanden?
+
+**Entscheidung vertagt bis nhDeep-Zahlen vorliegen.** Danach Richtung: (A) depth-Grid statt Farbe,
+(B) Engine-Nav-Agent als Router (+evtl. selbst fahren), (C) Spline-Graph-A*. Hybrid wahrscheinlich.

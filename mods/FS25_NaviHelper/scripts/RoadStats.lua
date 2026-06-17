@@ -541,7 +541,115 @@ function RoadStats:consoleProbeSurface()
     return RoadStats.probeSurface()
 end
 
+-- ---------------------------------------------------------------------------
+-- DEEP probe (post-research). Answers the 3 decisive questions with real numbers:
+--   1) Is the 4th return of getTerrainAttributesAtWorldPos a usable ROAD signal
+--      (terrain softness/depth: <=0.1 paved road, 0.1..0.8 hard, >0.8 soft)?
+--      -> compare depth ON the AI road splines vs general off-field ground.
+--   2) Does WATER detection via terrainHeight < g_currentMission.waterY work here?
+--   3) Is the engine VEHICLE NAVIGATION AGENT API present (engine road routing)?
+-- ---------------------------------------------------------------------------
+local function depthBucket(d)
+    if d == nil then return "nil" end
+    if d <= 0.1 then return "road(<=0.1)" elseif d <= 0.8 then return "hard(0.1-0.8)" else return "soft(>0.8)" end
+end
+
+local function terrainAttr(x, z)
+    local m = g_currentMission
+    if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return nil end
+    local y = 0
+    if getTerrainHeightAtWorldPos ~= nil then
+        local ok, h = pcall(getTerrainHeightAtWorldPos, m.terrainRootNode, x, 0, z); if ok and h then y = h end
+    end
+    local ok, r, g, b, depth, materialId = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, x, y, z, true, true, true, true, false)
+    if not ok then return nil end
+    return r, g, b, depth, materialId, y
+end
+
+function RoadStats.probeDeep()
+    local m = g_currentMission
+    if m == nil then return "no mission" end
+    log("DEEP start --------------------------------------------------")
+
+    -- Q3: engine navigation-agent API presence + water globals
+    local apis = { "createVehicleNavigationAgent", "setVehicleNavigationAgentTarget",
+        "getVehicleNavigationAgentNextCurvature", "removeNavigationAgent",
+        "getFillPlaneHeightAtWorldPos", "getWaterYAtWorldPos", "getWaterHeightAtWorldPos" }
+    local a = {}
+    for _, n in ipairs(apis) do a[#a + 1] = n .. "=" .. tostring(_G[n] ~= nil) end
+    log("DEEP globals: %s", table.concat(a, ", "))
+    log("DEEP mission: waterY=%s environmentAreaSystem=%s aiSystem=%s navMap=%s",
+        tostring(m.waterY), tostring(m.environmentAreaSystem),
+        tostring(m.aiSystem ~= nil), tostring(m.aiSystem and m.aiSystem:getNavigationMap()))
+
+    -- Q1/Q2 at the vehicle (known: on a road)
+    local v = m.controlledVehicle or (NaviHelper and NaviHelper.lastActiveVehicle)
+    if v and v.rootNode then
+        local vx, _, vz = getWorldTranslation(v.rootNode)
+        local r, g, b, depth, mid, y = terrainAttr(vx, vz)
+        log("DEEP @Fahrzeug (%.0f,%.0f): depth=%s [%s] mat=%s rgb=%.3f,%.3f,%.3f terrainY=%.2f waterY=%s underwater=%s",
+            vx, vz, tostring(depth), depthBucket(depth), tostring(mid), r or -1, g or -1, b or -1, y or -1,
+            tostring(m.waterY), tostring(m.waterY ~= nil and y ~= nil and y < m.waterY))
+    end
+
+    -- Q1: depth distribution ON the AI road splines (= real road) vs general off-field ground
+    local function newHist() return { ["road(<=0.1)"] = 0, ["hard(0.1-0.8)"] = 0, ["soft(>0.8)"] = 0, ["nil"] = 0, n = 0 } end
+    local function add(h, d) h[depthBucket(d)] = h[depthBucket(d)] + 1; h.n = h.n + 1 end
+    local function fmt(h) return string.format("n=%d road=%d hard=%d soft=%d nil=%d", h.n,
+        h["road(<=0.1)"], h["hard(0.1-0.8)"], h["soft(>0.8)"], h["nil"]) end
+
+    local onRoad = newHist()
+    local ai = m.aiSystem
+    if ai and ai.roadSplines and getSplinePosition ~= nil then
+        for _, sp in pairs(ai.roadSplines) do
+            local len = (getSplineLength ~= nil and getSplineLength(sp)) or 0
+            if type(len) == "number" and len > 0 then
+                local n = math.max(2, math.floor(len / 8))
+                for i = 0, n do
+                    local x, _, z = getSplinePosition(sp, i / n)
+                    if x ~= nil then local _, _, _, d = terrainAttr(x, z); add(onRoad, d) end
+                end
+            end
+        end
+    end
+    log("DEEP depth auf Splines (Strasse): %s", fmt(onRoad))
+
+    -- general off-field, on-land sample (exclude fields + underwater)
+    local offField = newHist()
+    local ts = m.terrainSize or 2048
+    local half, step = ts / 2, 24
+    local function isField(x, z)
+        if FSDensityMapUtil ~= nil and type(FSDensityMapUtil.getFieldDataAtWorldPosition) == "function" then
+            local y = 0
+            if getTerrainHeightAtWorldPos ~= nil then local ok, h = pcall(getTerrainHeightAtWorldPos, m.terrainRootNode, x, 0, z); if ok and h then y = h end end
+            local ok, f = pcall(FSDensityMapUtil.getFieldDataAtWorldPosition, x, y, z)
+            if ok and f ~= nil then return f == true end
+        end
+        return false
+    end
+    local x = -half
+    while x <= half do
+        local z = -half
+        while z <= half do
+            local r, g, bb, d, mid, y = terrainAttr(x, z)
+            if d ~= nil and not isField(x, z) and not (m.waterY ~= nil and y ~= nil and y < m.waterY) then
+                add(offField, d)
+            end
+            z = z + step
+        end
+        x = x + step
+    end
+    log("DEEP depth off-field/on-land (Wiese+Hof+Weg gemischt): %s", fmt(offField))
+    log("DEEP end ----------------------------------------------------")
+    return string.format("DEEP: Strasse[%s] vs off-field[%s] -> Log", fmt(onRoad), fmt(offField))
+end
+
+function RoadStats:consoleProbeDeep()
+    return RoadStats.probeDeep()
+end
+
 if addConsoleCommand ~= nil then
+    addConsoleCommand("nhDeep", "NaviHelper: Tiefe/Haerte-Signal + Wasser + Nav-Agent-API messen", "consoleProbeDeep", RoadStats)
     addConsoleCommand("nhRoadStats", "NaviHelper R0: Vanilla-Strassennetz vermessen", "consoleRoadStats", RoadStats)
     addConsoleCommand("nhProbe", "NaviHelper: aiSystem/Feld-Datenquellen dumpen", "consoleProbe", RoadStats)
     addConsoleCommand("nhProbeNav", "NaviHelper: navigationMap lesbar? Aufloesung + Sample", "consoleProbeNav", RoadStats)
