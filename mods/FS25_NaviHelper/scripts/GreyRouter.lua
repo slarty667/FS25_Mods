@@ -16,7 +16,9 @@ GreyRouter.maxSnap = 70.0    -- m, snap start/dest to nearest grey cell within t
 GreyRouter.satMax = 0.20     -- grey = saturation below this
 GreyRouter.brightMin = 0.08
 GreyRouter.brightMax = 0.78
-GreyRouter.maxIters = 90000  -- A* safety cap (finer grid -> more cells)
+GreyRouter.maxIters = 120000 -- A* safety cap (finer grid -> more cells)
+GreyRouter.maxOffroad = 4    -- cells of non-grey the path may bridge (gate/seam ~12m)
+GreyRouter.offroadPenalty = 6 -- cost multiplier for non-grey cells (prefer grey strongly)
 GreyRouter._grey = {}        -- cell "cx:cz" -> bool (terrain is static; cache for the session)
 GreyRouter._cacheCount = 0
 
@@ -113,13 +115,16 @@ end
 
 function GreyRouter.astar(scx, scz, dcx, dcz)
     local cell = GreyRouter.cell
+    local maxOff, offPen = GreyRouter.maxOffroad, GreyRouter.offroadPenalty
     local function heur(cx, cz) local dx, dz = cx - dcx, cz - dcz; return math.sqrt(dx * dx + dz * dz) * cell end
-    local startKey = scx .. ":" .. scz
+    -- state = cell + how many non-grey cells in a row we've crossed (so gaps stay bounded)
+    local function K(cx, cz, run) return cx .. ":" .. cz .. ":" .. run end
+    local startKey = K(scx, scz, 0)
     local g = { [startKey] = 0 }
     local came = {}
     local closed = {}
     local open = {}
-    heapPush(open, { f = heur(scx, scz), key = startKey, cx = scx, cz = scz })
+    heapPush(open, { f = heur(scx, scz), key = startKey, cx = scx, cz = scz, run = 0 })
     local iters = 0
     while #open > 0 and iters < GreyRouter.maxIters do
         iters = iters + 1
@@ -141,14 +146,19 @@ function GreyRouter.astar(scx, scz, dcx, dcz)
                 for dz = -1, 1 do
                     if not (dx == 0 and dz == 0) then
                         local nx, nz = cur.cx + dx, cur.cz + dz
-                        local nk = nx .. ":" .. nz
-                        if not closed[nk] and GreyRouter.cellGrey(nx, nz) then
-                            local step = (dx == 0 or dz == 0) and cell or (cell * 1.41421)
-                            local tentative = g[cur.key] + step
-                            if tentative < (g[nk] or 1e18) then
-                                g[nk] = tentative
-                                came[nk] = { key = cur.key, cx = cur.cx, cz = cur.cz }
-                                heapPush(open, { f = tentative + heur(nx, nz), key = nk, cx = nx, cz = nz })
+                        local grey = GreyRouter.cellGrey(nx, nz)
+                        local newrun = grey and 0 or (cur.run + 1)
+                        if newrun <= maxOff then
+                            local base = (dx == 0 or dz == 0) and cell or (cell * 1.41421)
+                            local stepCost = grey and base or (base * offPen)
+                            local nk = K(nx, nz, newrun)
+                            if not closed[nk] then
+                                local tentative = g[cur.key] + stepCost
+                                if tentative < (g[nk] or 1e18) then
+                                    g[nk] = tentative
+                                    came[nk] = { key = cur.key, cx = cur.cx, cz = cur.cz }
+                                    heapPush(open, { f = tentative + heur(nx, nz), key = nk, cx = nx, cz = nz, run = newrun })
+                                end
                             end
                         end
                     end
