@@ -51,8 +51,9 @@ local function isRoadColor(r, g, b)
     local greenish = g > r * 1.10 and g > b * 1.10
     local bluish = b > r * 1.10 and b > g * 1.05
     local redish = r > g * 1.22 and r > b * 1.22
-    -- grey road
-    if bright > 0.30 and bright < 0.86 and sat < 0.24 and not greenish and not bluish and not redish then
+    -- grey road. Floor lowered from WayPointGPS's 0.30: Helden's grey roads are ~0.284,
+    -- darker than the maps WPGPS was tuned for. Hue exclusions keep grass/fields out.
+    if bright > 0.12 and bright < 0.86 and sat < 0.24 and not greenish and not bluish and not redish then
         return true
     end
     -- tan/beige dirt+gravel lane (narrow enough to exclude ripe crops/fields)
