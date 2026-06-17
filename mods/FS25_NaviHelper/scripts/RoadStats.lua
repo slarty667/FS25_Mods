@@ -648,7 +648,64 @@ function RoadStats:consoleProbeDeep()
     return RoadStats.probeDeep()
 end
 
+-- ---------------------------------------------------------------------------
+-- TRACK fingerprint: park ON a spot (a missing field track, a meadow, a road) and run
+-- nhTrack. Logs the full per-point fingerprint and hunts a GRASS/FOLIAGE signal that
+-- separates a soft dirt track (no grass) from a soft meadow (grass) -> the 2nd sensor.
+-- ---------------------------------------------------------------------------
+function RoadStats.probeTrack()
+    local m = g_currentMission
+    local v = m and (m.controlledVehicle or (NaviHelper and NaviHelper.lastActiveVehicle))
+    if not (v and v.rootNode) then return "kein Fahrzeug" end
+    local x, _, z = getWorldTranslation(v.rootNode)
+    local r, g, b, depth, mid, y = terrainAttr(x, z)
+
+    local onField = false
+    if FSDensityMapUtil ~= nil and type(FSDensityMapUtil.getFieldDataAtWorldPosition) == "function" then
+        local ok, f = pcall(FSDensityMapUtil.getFieldDataAtWorldPosition, x, y or 0, z); if ok and f ~= nil then onField = (f == true) end
+    end
+    log("TRACK @(%.0f,%.0f): depth=%s [%s] mat=%s rgb=%.3f,%.3f,%.3f Feld=%s",
+        x, z, tostring(depth), depthBucket(depth), tostring(mid), r or -1, g or -1, b or -1, tostring(onField))
+
+    -- foliage/ground-cover candidates: read density at vehicle for each candidate map id
+    local function readDensity(label, id)
+        if id == nil or getDensityAtWorldPos == nil then return end
+        local ok, bits = pcall(getDensityAtWorldPos, id, x, y or 0, z)
+        log("TRACK density %s (id=%s): ok=%s bits=%s", label, tostring(id), tostring(ok), tostring(bits))
+    end
+    readDensity("terrainDetail", m.terrainDetailId)
+    readDensity("terrainDetailHeight", m.terrainDetailHeightId)
+
+    -- height-type (decoFoliage/grass height) via the height manager, if present
+    if _G.getDensityMapHeightAtWorldPos ~= nil then
+        local ok, h = pcall(getDensityMapHeightAtWorldPos, x, y or 0, z)
+        log("TRACK getDensityMapHeightAtWorldPos: ok=%s h=%s", tostring(ok), tostring(h))
+    else
+        log("TRACK getDensityMapHeightAtWorldPos fehlt")
+    end
+
+    -- discover any foliage/grass/deco fields on the mission for follow-up
+    local hits = {}
+    for k, val in pairs(m) do
+        local lk = string.lower(tostring(k))
+        if lk:find("foliage") or lk:find("grass") or lk:find("deco") or lk:find("detailheight") then
+            hits[#hits + 1] = tostring(k) .. "(" .. type(val) .. ")"
+        end
+    end
+    table.sort(hits)
+    log("TRACK mission foliage/grass-Felder: %s", table.concat(hits, ", "))
+    log("TRACK globals: g_densityMapHeightManager=%s g_foliageSystem=%s foliageSystem=%s",
+        tostring(_G.g_densityMapHeightManager ~= nil), tostring(_G.g_foliageSystem ~= nil), tostring(m.foliageSystem ~= nil))
+    return string.format("TRACK: depth=%s [%s] Feld=%s -> Log (vergleich Strasse vs fehlender Weg vs Wiese)",
+        tostring(depth), depthBucket(depth), tostring(onField))
+end
+
+function RoadStats:consoleProbeTrack()
+    return RoadStats.probeTrack()
+end
+
 if addConsoleCommand ~= nil then
+    addConsoleCommand("nhTrack", "NaviHelper: Fingerprint am Fahrzeug (Tiefe+Material+Gras/Foliage) - auf fehlendem Feldweg/Wiese/Strasse messen", "consoleProbeTrack", RoadStats)
     addConsoleCommand("nhDeep", "NaviHelper: Tiefe/Haerte-Signal + Wasser + Nav-Agent-API messen", "consoleProbeDeep", RoadStats)
     addConsoleCommand("nhRoadStats", "NaviHelper R0: Vanilla-Strassennetz vermessen", "consoleRoadStats", RoadStats)
     addConsoleCommand("nhProbe", "NaviHelper: aiSystem/Feld-Datenquellen dumpen", "consoleProbe", RoadStats)
