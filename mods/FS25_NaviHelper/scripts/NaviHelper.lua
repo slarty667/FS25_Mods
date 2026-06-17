@@ -137,6 +137,8 @@ function NaviHelper:loadMap(name)
 
     -- Load the pre-baked road graph for this map (if a processed-map file exists).
     if RoadGraphFile and RoadGraphFile.load then pcall(RoadGraphFile.load) end
+    -- Reset the grey-terrain router cache for the new map.
+    if GreyRouter and GreyRouter.reset then pcall(GreyRouter.reset) end
 
     -- Hook the in-game map frame's click callback. It hands us WORLD coordinates
     -- directly (frame, element, worldX, worldZ) — robust, unlike a self-rolled
@@ -1090,7 +1092,7 @@ function NaviHelper:buildRoutePath(route, vx, vz)
     for i = 1, #route do seq[#seq + 1] = { x = route[i].x, z = route[i].z } end
 
     local nodes = {}
-    local roadRouted, adRouted, straightSegs = 0, 0, 0
+    local greyRouted, roadRouted, adRouted, straightSegs = 0, 0, 0, 0
     local function push(p)
         local last = nodes[#nodes]
         if last and math.abs(last.x - p.x) < 0.5 and math.abs(last.z - p.z) < 0.5 then return end
@@ -1100,12 +1102,17 @@ function NaviHelper:buildRoutePath(route, vx, vz)
     for i = 1, #seq - 1 do
         local a, b = seq[i], seq[i + 1]
         local seg
-        -- Priority 1: pre-baked road graph (processed map) — follows real roads.
-        if RoadGraphFile and RoadGraphFile.ready and RoadGraphFile.findPath then
+        -- Priority 1: grey-terrain grid router — roads/streets/tracks on ANY map, no calibration.
+        if GreyRouter and GreyRouter.findPath then
+            local ok, path = pcall(GreyRouter.findPath, a.x, a.z, b.x, b.z)
+            if ok and path and #path > 0 then seg = path; greyRouted = greyRouted + 1 end
+        end
+        -- Priority 2: pre-baked road graph (processed map), if present.
+        if seg == nil and RoadGraphFile and RoadGraphFile.ready and RoadGraphFile.findPath then
             local ok, path = pcall(RoadGraphFile.findPath, a.x, a.z, b.x, b.z)
             if ok and path and #path > 0 then seg = path; roadRouted = roadRouted + 1 end
         end
-        -- Priority 2: AutoDrive (optional).
+        -- Priority 3: AutoDrive (optional).
         if seg == nil and NaviHelperAD and NaviHelperAD.getPathFromToWorld then
             local ok, path = pcall(NaviHelperAD.getPathFromToWorld, a.x, a.z, b.x, b.z)
             if ok and path and #path > 0 then seg = path; adRouted = adRouted + 1 end
@@ -1119,8 +1126,8 @@ function NaviHelper:buildRoutePath(route, vx, vz)
         end
     end
 
-    log("Route built: %d nodes from %d segment(s) — %d road-graph, %d AD, %d straight",
-        #nodes, #seq - 1, roadRouted, adRouted, straightSegs)
+    log("Route built: %d nodes from %d segment(s) — %d grey-grid, %d road-graph, %d AD, %d straight",
+        #nodes, #seq - 1, greyRouted, roadRouted, adRouted, straightSegs)
     -- Dump the route geometry every rebuild (buildRoutePath only runs on a real change,
     -- not per frame) so we can plot the ACTUAL route the player drove against the overview.
     do
