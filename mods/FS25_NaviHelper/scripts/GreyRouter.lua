@@ -225,7 +225,16 @@ function GreyRouter.findPath(sx, sz, dx, dz)
     local scx, scz = GreyRouter.findNearestGreyCell(sx, sz)
     local dcx, dcz = GreyRouter.findNearestGreyCell(dx, dz)
     if scx == nil or dcx == nil then
-        log("findPath: kein grauer Start/Ziel-Snap (s=%s d=%s)", tostring(scx ~= nil), tostring(dcx ~= nil))
+        local function colAt(x, z)
+            local m = g_currentMission
+            local ok, r, g, b = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, x, terrainHeight(x, z), z, true, true, true, true, false)
+            if ok and r ~= nil then return r, g, b end
+            return -1, -1, -1
+        end
+        local sr, sg, sb = colAt(sx, sz)
+        local dr, dg, db = colAt(dx, dz)
+        log("findPath: kein Snap (s=%s d=%s) | start rgb=%.3f,%.3f,%.3f dest rgb=%.3f,%.3f,%.3f",
+            tostring(scx ~= nil), tostring(dcx ~= nil), sr, sg, sb, dr, dg, db)
         return nil
     end
     local cells, iters = GreyRouter.astar(scx, scz, dcx, dcz)
