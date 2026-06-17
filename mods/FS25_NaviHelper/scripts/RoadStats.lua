@@ -483,7 +483,17 @@ local function terrainSurface(x, z)
     end
     local ok, r, g, b, a, materialId = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, x, y, z, true, true, true, true, false)
     if not ok then return nil end
-    return materialId, surfaceNameFor(materialId)
+    return materialId, surfaceNameFor(materialId), r or 0, g or 0, b or 0
+end
+
+-- Road by COLOR: grey = low saturation. Confirmed: roads/streets/tracks sat~0,
+-- fields brown sat~0.76. (WayPointGPS fallback for maps without material names.)
+local function isGreyRoad(r, g, b)
+    local mx = math.max(r, math.max(g, b))
+    local mn = math.min(r, math.min(g, b))
+    local sat = (mx > 0.001) and ((mx - mn) / mx) or 0
+    local bright = (r + g + b) / 3
+    return sat < 0.18 and bright > 0.08 and bright < 0.75
 end
 
 local function isRoadName(n)
@@ -503,34 +513,28 @@ function RoadStats.probeSurface()
     local v = m and m.controlledVehicle or (NaviHelper and NaviHelper.lastActiveVehicle)
     if v and v.rootNode then
         local vx, _, vz = getWorldTranslation(v.rootNode)
-        local mid, name = terrainSurface(vx, vz)
-        log("SURFACE @ Fahrzeug (%.0f,%.0f): materialId=%s name=%s road=%s", vx, vz, tostring(mid), tostring(name), tostring(isRoadName(name)))
+        local mid, _, r, g, b = terrainSurface(vx, vz)
+        log("SURFACE @ Fahrzeug (%.0f,%.0f): materialId=%s rgb=%.3f,%.3f,%.3f grau/Strasse=%s",
+            vx, vz, tostring(mid), r or -1, g or -1, b or -1, tostring(isGreyRoad(r or 0, g or 0, b or 0)))
     end
-    -- grid sweep over the map: tally surfaces, count road cells
+    -- grid sweep: count grey (road) cells via terrain colour
     local ts = (m and m.terrainSize) or 2048
-    local half, step = ts / 2, 16
-    local counts, roadCells, total = {}, 0, 0
+    local half, step = ts / 2, 12
+    local roadCells, total = 0, 0
     local x = -half
     while x <= half do
         local z = -half
         while z <= half do
-            local mid, name = terrainSurface(x, z)
+            local _, _, r, g, b = terrainSurface(x, z)
             total = total + 1
-            local key = name or ("id" .. tostring(mid))
-            counts[key] = (counts[key] or 0) + 1
-            if isRoadName(name) then roadCells = roadCells + 1 end
+            if r ~= nil and isGreyRoad(r, g, b) then roadCells = roadCells + 1 end
             z = z + step
         end
         x = x + step
     end
-    local list = {}
-    for k, c in pairs(counts) do list[#list + 1] = { k, c } end
-    table.sort(list, function(a, b) return a[2] > b[2] end)
-    local top = {}
-    for i = 1, math.min(12, #list) do top[#top + 1] = list[i][1] .. "=" .. list[i][2] end
-    log("SURFACE sweep @%dm: %d Zellen, %d Strassen-Zellen (%.1f%%), %d Oberflaechen; top: %s",
-        step, total, roadCells, (total > 0 and roadCells / total * 100 or 0), #list, table.concat(top, " "))
-    return string.format("SURFACE: %d/%d road cells, %d Oberflaechen -> Log", roadCells, total, #list)
+    log("SURFACE Grau-Sweep @%dm: %d Zellen, %d grau/Strasse (%.1f%%)",
+        step, total, roadCells, (total > 0 and roadCells / total * 100 or 0))
+    return string.format("SURFACE: %d/%d grau/Strasse-Zellen -> Log", roadCells, total)
 end
 
 function RoadStats:consoleProbeSurface()
