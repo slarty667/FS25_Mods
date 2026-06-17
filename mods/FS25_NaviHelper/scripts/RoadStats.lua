@@ -407,8 +407,38 @@ function RoadStats.probeSplines()
     for _, r in ipairs({ m and m.terrainRootNode, m and m.rootNode, m and m.mapRootNode }) do
         if r ~= nil then walk(r, "", 0) end
     end
-    log("SPLINES: %d Splines gesamt, ~%.0fm Laenge | road/street=%d field=%d water/rail=%d other=%d (Knoten gescannt=%d)",
+    log("SPLINES (Szenen-Scan): %d gesamt, ~%.0fm | road/street=%d field=%d water/rail=%d other=%d (gescannt=%d)",
         total, sumLen, cat.road, cat.field, cat.water, cat.other, scanned)
+
+    -- Direct table scan (bypass SHAPE check) of aiSystem.roadSplines + trafficSystem,
+    -- so we know the real spline inventory independent of the scene walk.
+    local function tableSplineStats(tbl)
+        local c, l = 0, 0
+        if type(tbl) ~= "table" or getSplineLength == nil then return c, l end
+        for _, node in pairs(tbl) do
+            if type(node) == "number" then
+                local ok, len = pcall(getSplineLength, node)
+                if ok and type(len) == "number" and len > 0 then c = c + 1; l = l + len end
+            end
+        end
+        return c, l
+    end
+    if m ~= nil and m.aiSystem ~= nil then
+        local c, l = tableSplineStats(m.aiSystem.roadSplines)
+        log("  aiSystem.roadSplines direkt: %d Splines, %.0fm", c, l)
+    end
+    if m ~= nil and m.trafficSystem ~= nil then
+        local ts = m.trafficSystem
+        for _, key in ipairs({ "splines", "roadSplines", "paths", "spline" }) do
+            local c, l = tableSplineStats(ts[key])
+            if c > 0 then log("  trafficSystem.%s: %d Splines, %.0fm", key, c, l) end
+        end
+        -- list trafficSystem table keys for orientation
+        local keys = {}
+        for k, v in pairs(ts) do keys[#keys + 1] = tostring(k) .. "(" .. type(v) .. ")" end
+        table.sort(keys)
+        log("  trafficSystem keys: %s", table.concat(keys, ", "))
+    end
     for i = 1, math.min(#found, 30) do log("  spline: %s", found[i]) end
     return string.format("SPLINES: %d gesamt, road=%d field=%d other=%d -> Log", total, cat.road, cat.field, cat.other)
 end
