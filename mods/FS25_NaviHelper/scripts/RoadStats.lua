@@ -459,10 +459,89 @@ function RoadStats:consoleProbeSplines()
     return RoadStats.probeSplines()
 end
 
+-- Read the terrain GROUND MATERIAL/surface at positions (the WayPointGPS road source):
+-- getTerrainAttributesAtWorldPos -> materialId -> surface name (asphalt/gravel/dirt/road...).
+-- This finds texture-painted streets/tracks that are NOT splines. Verify it on this map.
+local function surfaceNameFor(materialId)
+    local m = g_currentMission
+    if m == nil or m.materialIdToSurfaceSound == nil or m.surfaceNameToSurfaceSound == nil then return nil end
+    local snd = m.materialIdToSurfaceSound[materialId]
+    if snd == nil then return nil end
+    for name, value in pairs(m.surfaceNameToSurfaceSound) do
+        if value == snd then return tostring(name) end
+    end
+    return nil
+end
+
+local function terrainSurface(x, z)
+    local m = g_currentMission
+    if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return nil end
+    local y = 0
+    if getTerrainHeightAtWorldPos ~= nil then
+        local ok, h = pcall(getTerrainHeightAtWorldPos, m.terrainRootNode, x, 0, z)
+        if ok and h then y = h end
+    end
+    local ok, r, g, b, a, materialId = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, x, y, z, true, true, true, true, false)
+    if not ok then return nil end
+    return materialId, surfaceNameFor(materialId)
+end
+
+local function isRoadName(n)
+    if n == nil then return false end
+    n = string.lower(n)
+    return n:find("asphalt") or n:find("concrete") or n:find("gravel") or n:find("dirt")
+        or n:find("road") or n:find("path") or n:find("track") or n:find("pavement")
+        or n:find("paved") or n:find("cobble") or n:find("stone")
+end
+
+function RoadStats.probeSurface()
+    if getTerrainAttributesAtWorldPos == nil then
+        log("SURFACE: getTerrainAttributesAtWorldPos fehlt"); return "getTerrainAttributesAtWorldPos fehlt"
+    end
+    local m = g_currentMission
+    -- at vehicle
+    local v = m and m.controlledVehicle or (NaviHelper and NaviHelper.lastActiveVehicle)
+    if v and v.rootNode then
+        local vx, _, vz = getWorldTranslation(v.rootNode)
+        local mid, name = terrainSurface(vx, vz)
+        log("SURFACE @ Fahrzeug (%.0f,%.0f): materialId=%s name=%s road=%s", vx, vz, tostring(mid), tostring(name), tostring(isRoadName(name)))
+    end
+    -- grid sweep over the map: tally surfaces, count road cells
+    local ts = (m and m.terrainSize) or 2048
+    local half, step = ts / 2, 16
+    local counts, roadCells, total = {}, 0, 0
+    local x = -half
+    while x <= half do
+        local z = -half
+        while z <= half do
+            local mid, name = terrainSurface(x, z)
+            total = total + 1
+            local key = name or ("id" .. tostring(mid))
+            counts[key] = (counts[key] or 0) + 1
+            if isRoadName(name) then roadCells = roadCells + 1 end
+            z = z + step
+        end
+        x = x + step
+    end
+    local list = {}
+    for k, c in pairs(counts) do list[#list + 1] = { k, c } end
+    table.sort(list, function(a, b) return a[2] > b[2] end)
+    local top = {}
+    for i = 1, math.min(12, #list) do top[#top + 1] = list[i][1] .. "=" .. list[i][2] end
+    log("SURFACE sweep @%dm: %d Zellen, %d Strassen-Zellen (%.1f%%), %d Oberflaechen; top: %s",
+        step, total, roadCells, (total > 0 and roadCells / total * 100 or 0), #list, table.concat(top, " "))
+    return string.format("SURFACE: %d/%d road cells, %d Oberflaechen -> Log", roadCells, total, #list)
+end
+
+function RoadStats:consoleProbeSurface()
+    return RoadStats.probeSurface()
+end
+
 if addConsoleCommand ~= nil then
     addConsoleCommand("nhRoadStats", "NaviHelper R0: Vanilla-Strassennetz vermessen", "consoleRoadStats", RoadStats)
     addConsoleCommand("nhProbe", "NaviHelper: aiSystem/Feld-Datenquellen dumpen", "consoleProbe", RoadStats)
     addConsoleCommand("nhProbeNav", "NaviHelper: navigationMap lesbar? Aufloesung + Sample", "consoleProbeNav", RoadStats)
     addConsoleCommand("nhProbeReach", "NaviHelper G0: getIsPositionReachable als Drivability-Orakel testen", "consoleProbeReach", RoadStats)
     addConsoleCommand("nhSplines", "NaviHelper: Szenen-Graph nach Strassen-Splines scannen (WayPointGPS-Weg)", "consoleProbeSplines", RoadStats)
+    addConsoleCommand("nhSurface", "NaviHelper: Boden-Material/Oberflaeche auslesen (Strassen-Textur-Erkennung)", "consoleProbeSurface", RoadStats)
 end
