@@ -17,8 +17,10 @@ GreyRouter.maxRoadSnap = 260.0 -- m, snap DEST to nearest ROAD within this (fiel
 GreyRouter.heuristicWeight = 1.3 -- weighted A* (>1: fewer iters, slightly suboptimal, still road-hugging)
 GreyRouter.roadDepthMax = 0.1 -- terrain sink-depth <= this = paved/compacted road (measured)
 GreyRouter.maxIters = 200000 -- A* safety cap (cost-gradient explores more road before open)
-GreyRouter.openPenalty = 60  -- step-cost multiplier for drivable-but-not-road cells
-                             -- (verge/forest/meadow/dirt-track): allowed, but roads win
+GreyRouter.openPenalty = 3   -- step-cost multiplier for drivable-but-not-road cells
+                             -- (verge/forest/meadow/dirt-track). Modest: roads are preferred,
+                             -- but a short Feldweg/green shortcut beats a long tarmac detour.
+                             -- (60 was far too high -> router took absurd road loops.)
 GreyRouter._grey = {}        -- cell "cx:cz" -> class string (terrain static; cache per session)
 GreyRouter._cacheCount = 0
 
