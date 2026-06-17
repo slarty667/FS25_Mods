@@ -48,14 +48,28 @@ end
 -- and the soft lake bed is excluded for free. No colour, no continuity gymnastics.
 -- ---------------------------------------------------------------------------
 
--- terrain sink-depth (softness) at a world position, or nil. <=roadDepthMax => road.
-local function depthAt(wx, wz)
+-- terrain fingerprint at a world position: colour (r,g,b) + sink-depth, or nil.
+local function attrAt(wx, wz)
     local m = g_currentMission
     if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return nil end
     local wy = terrainHeight(wx, wz)
-    local ok, _, _, _, depth = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
-    if ok and depth ~= nil then return depth end
+    local ok, r, g, b, depth = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
+    if ok and depth ~= nil then return r, g, b, depth end
     return nil
+end
+
+-- Dark reddish-brown bare earth = dirt field-track. Measured on Helden (nhTrack):
+-- track rgb ~0.155,0.082,0.037 (sat ~0.76) vs grey road/meadow (sat ~0). High
+-- saturation + reddish ordering separates a soft dirt LANE from the soft grey/green
+-- meadow that depth alone cannot. (Field interiors share this colour but are removed by
+-- the field exclusion.)
+local function isDirtBrown(r, g, b)
+    if r == nil then return false end
+    local mx = math.max(r, math.max(g, b))
+    local mn = math.min(r, math.min(g, b))
+    local bright = (r + g + b) / 3
+    local sat = (mx > 0.001) and ((mx - mn) / mx) or 0
+    return sat > 0.30 and bright < 0.50 and r > g * 1.25 and g > b * 1.10 and r > b * 1.8
 end
 
 -- forward decl (defined below)
@@ -78,14 +92,18 @@ function isFieldAt(wx, wz)
     return false
 end
 
--- Driveable lane test: a compacted/paved surface (low sink-depth) that is not a field.
--- depth<=roadDepthMax is the measured road signal; the soft lake bed and grass meadow
--- both read higher and are excluded for free. (Name kept as isGreyAt for call sites.)
+-- Driveable lane test (two measured signals), only off-field:
+--   1) sink-depth <= roadDepthMax  -> paved/compacted road, yard (grey, soft lakebed excluded)
+--   2) dark reddish-brown earth    -> soft dirt field-track the depth signal misses
+-- Field interiors (same brown colour) are removed by the field exclusion first.
+-- (Name kept as isGreyAt for existing call sites.)
 local function isGreyAt(wx, wz)
-    local d = depthAt(wx, wz)
-    if d == nil or d > GreyRouter.roadDepthMax then return false end
+    local r, g, b, d = attrAt(wx, wz)
+    if d == nil then return false end
     if isFieldAt(wx, wz) then return false end
-    return true
+    if d <= GreyRouter.roadDepthMax then return true end
+    if isDirtBrown(r, g, b) then return true end
+    return false
 end
 
 -- Is cell (cx,cz) drivable? Grey if a path TOUCHES the cell — sample centre + 4 inner
