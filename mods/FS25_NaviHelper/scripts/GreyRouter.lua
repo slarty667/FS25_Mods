@@ -11,12 +11,12 @@
 
 GreyRouter = {}
 GreyRouter.LOG_PREFIX = "[NaviHelper/Grey]"
-GreyRouter.cell = 5.0        -- m, grid cell size
+GreyRouter.cell = 3.0        -- m, grid cell size (fine -> junctions/narrow streets resolve)
 GreyRouter.maxSnap = 70.0    -- m, snap start/dest to nearest grey cell within this
 GreyRouter.satMax = 0.20     -- grey = saturation below this
 GreyRouter.brightMin = 0.08
 GreyRouter.brightMax = 0.78
-GreyRouter.maxIters = 40000  -- A* safety cap
+GreyRouter.maxIters = 90000  -- A* safety cap (finer grid -> more cells)
 GreyRouter._grey = {}        -- cell "cx:cz" -> bool (terrain is static; cache for the session)
 GreyRouter._cacheCount = 0
 
@@ -159,6 +159,36 @@ function GreyRouter.astar(scx, scz, dcx, dcz)
     return nil, iters
 end
 
+-- Line-of-sight: does the straight line (x1,z1)->(x2,z2) stay on drivable (grey) cells?
+local function losGrey(x1, z1, x2, z2)
+    local cell = GreyRouter.cell
+    local d = math.sqrt((x2 - x1) ^ 2 + (z2 - z1) ^ 2)
+    local steps = math.max(1, math.floor(d / (cell * 0.6)))
+    for i = 0, steps do
+        local t = i / steps
+        local x, z = x1 + (x2 - x1) * t, z1 + (z2 - z1) * t
+        if not GreyRouter.cellGrey(math.floor(x / cell), math.floor(z / cell)) then return false end
+    end
+    return true
+end
+
+-- String-pulling: greedily skip to the farthest still-visible point -> straight, smooth path.
+local function smooth(pts)
+    if #pts <= 2 then return pts end
+    local out = { pts[1] }
+    local i = 1
+    while i < #pts do
+        local j = #pts
+        while j > i + 1 do
+            if losGrey(pts[i].x, pts[i].z, pts[j].x, pts[j].z) then break end
+            j = j - 1
+        end
+        out[#out + 1] = pts[j]
+        i = j
+    end
+    return out
+end
+
 -- Public: world path (list of {x,y,z}) following grey terrain from start to dest, or nil.
 function GreyRouter.findPath(sx, sz, dx, dz)
     if g_currentMission == nil or getTerrainAttributesAtWorldPos == nil then return nil end
@@ -174,14 +204,12 @@ function GreyRouter.findPath(sx, sz, dx, dz)
         return nil
     end
     local cell = GreyRouter.cell
-    local out = { { x = sx, y = terrainHeight(sx, sz), z = sz } }
-    local function push(x, z)
-        local last = out[#out]
-        if last and math.abs(last.x - x) < 0.5 and math.abs(last.z - z) < 0.5 then return end
-        out[#out + 1] = { x = x, y = terrainHeight(x, z), z = z }
-    end
-    for _, c in ipairs(cells) do push((c[1] + 0.5) * cell, (c[2] + 0.5) * cell) end
-    push(dx, dz)
-    log("findPath: %d Zellen, %d iters, %d Punkte", #cells, iters, #out)
+    local raw = { { x = sx, z = sz } }
+    for _, c in ipairs(cells) do raw[#raw + 1] = { x = (c[1] + 0.5) * cell, z = (c[2] + 0.5) * cell } end
+    raw[#raw + 1] = { x = dx, z = dz }
+    local sm = smooth(raw)
+    local out = {}
+    for _, p in ipairs(sm) do out[#out + 1] = { x = p.x, y = terrainHeight(p.x, p.z), z = p.z } end
+    log("findPath: %d Zellen -> %d geglaettet, %d iters", #cells, #out, iters)
     return out
 end
