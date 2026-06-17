@@ -298,7 +298,29 @@ große Snap-Distanzen. Fixes (Reihenfolge offen):
 - evtl. Off-road-Anschluss übers Drivability-/Gelände statt stur Luftlinie.
 Fixes committet bis 1dbb875. Mechanik steht; nächster Hebel = Graph-Vollständigkeit.
 
-## Spline-Inventur Helden (2026-06-17) — Bild-Weg bestätigt richtig
+## DURCHBRUCH (2026-06-17): Terrain-Farbe = Wege-Erkennung (wie WayPointGPS)
+Markus' Hartnäckigkeit ("WayPointGPS macht's doch einfach") aufgedeckt: WayPointGPS liest
+das **Terrain-Material/-Farbe** via `getTerrainAttributesAtWorldPos(terrainRootNode,x,y,z,
+true,true,true,true,false)` → r,g,b + materialId. Maps ohne Material-Namen (wie Helden) →
+**Farb-Fallback: grau = Weg.** Per VTRACK+Farbe bewiesen:
+- Hauptstraße + Dorfstraße + **Feldweg**: alle grau, rgb≈0.284/0.284/0.284, **Sättigung 0.00**.
+- Acker: braun, rgb≈0.155/0.082/0.037, **Sättigung 0.76**. Glasklare Trennung.
+- Grau-Sweep @12m: 1323/29241 Zellen grau (4,5 %) = Wege-Netz-Größe. Abfrage ~0.0004ms.
+
+### NEUER PLAN (ersetzt Bild/Kalibrierung/Spline)
+Grid-Pathfinding über **graue Terrain-Zellen**, Grau-Check live per
+`getTerrainAttributesAtWorldPos` (Sättigung < ~0.18). Engine-Koordinaten, KEINE
+Kalibrierung, KEIN Bild, KEIN Spline, **jede Map sofort** (Hof/Dorf/Feldwege inklusive).
+- T0: Grau-Orakel verifiziert (✓ 4,5 %, sauber getrennt).
+- T1: A* auf virtuellem Grid (~6–8 m Zellen), Zelle befahrbar = grau; Start/Ziel auf
+  nächste graue Zelle snappen; Abfrage on-demand (billig, kein Bake noetig).
+- T2: Pfad glätten + an bestehende Route/HUD/Karten-Anzeige hängen.
+- T3 optional: Feldwege (anderes Material/Farbe) teurer gewichten als Hauptstraßen;
+  Material-Namen nutzen wo vorhanden.
+- Bild-Pipeline (extract.py/fit_calib/Helden.lua/RoadGraphFile) + Spline-Scan → eingemottet
+  (Code bleibt als Referenz/Fallback, inaktiv).
+
+## Spline-Inventur Helden (2026-06-17) — Bild-Weg war Sackgasse (s.o. Durchbruch)
 Frage: liefert der WayPointGPS-Spline-Weg auch Dorfstraßen/Feldwege ohne KI-Verkehr?
 nhSplines-Probe (scannt aiSystem + trafficSystem.rootNodeId + Szenen-Graph):
 - aiSystem.roadSplines: 19 Splines, 12.638 m (SHAPE-Check ok=19).
