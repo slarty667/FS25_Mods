@@ -82,63 +82,80 @@ end
 -- populate the mapping.
 -- ---------------------------------------------------------------------------
 
--- materialId -> surface name string (or nil). Via mission's material<->sound tables.
-local function surfaceNameFor(materialId)
+-- materialId at a world position (the painted terrain texture index). Discrete and
+-- map-agnostic: on Helden the road reads mat=7. This is our road fingerprint.
+local function materialAt(wx, wz)
     local m = g_currentMission
-    if m == nil or m.materialIdToSurfaceSound == nil or m.surfaceNameToSurfaceSound == nil then return nil end
-    local snd = m.materialIdToSurfaceSound[materialId]
-    if snd == nil then return nil end
-    for name, value in pairs(m.surfaceNameToSurfaceSound) do
-        if value == snd then return tostring(name) end
-    end
+    if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return nil end
+    local wy = terrainHeight(wx, wz)
+    local ok, _, _, _, _, materialId = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
+    if ok then return materialId end
     return nil
 end
 
--- Does this surface name denote a driveable lane (paved or dirt/gravel track)?
--- Explicitly reject natural ground (grass/field/water/snow/forest) even if "dirt"-ish.
-local function isRoadSurfaceName(n)
-    if n == nil then return false end
-    n = string.lower(n)
-    if n:find("grass") or n:find("field") or n:find("water") or n:find("river")
-        or n:find("snow") or n:find("forest") or n:find("foliage") or n:find("crop")
-        or n:find("plow") or n:find("sown") or n:find("meadow") then
-        return false
-    end
-    return n:find("asphalt") or n:find("concrete") or n:find("gravel") or n:find("dirt")
-        or n:find("road") or n:find("path") or n:find("track") or n:find("pavement")
-        or n:find("paved") or n:find("cobble") or n:find("stone") or n:find("ground")
-        or n:find("mud") or n:find("sand")
-end
+-- forward decl (defined below)
+local isFieldAt
 
--- Build materialId -> isRoad cache once, by walking the map's material table. Logs the
--- road surface names found so we can verify the map exposes usable names (else count=0
--- => colour fallback). Cheap, one-time.
+-- Learn the set of road materialIds by sampling the map's built-in AI road splines:
+-- those splines lie on real roads by definition, so the terrain material under them IS
+-- the road material. No name table, no colour, no calibration. Materials seen often
+-- enough become "road"; lake/meadow have other materials => excluded for free.
 function GreyRouter.buildRoadMaterials()
     if GreyRouter._roadMatBuilt then return GreyRouter._roadMatCount end
     GreyRouter._roadMatBuilt = true
     local m = g_currentMission
-    if m == nil or m.materialIdToSurfaceSound == nil then
-        log("RoadMaterials: keine materialIdToSurfaceSound -> Farb-Fallback")
+    local ai = m and m.aiSystem
+    local splines = ai and ai.roadSplines
+    if splines == nil or getSplinePosition == nil then
+        log("RoadMaterials: keine roadSplines -> Farb-Fallback")
         return 0
     end
-    local roadNames, allNames = {}, {}
-    for mid, _ in pairs(m.materialIdToSurfaceSound) do
-        local name = surfaceNameFor(mid)
-        local isRoad = isRoadSurfaceName(name)
-        GreyRouter._roadMat[mid] = isRoad
-        if name ~= nil then allNames[name] = true end
-        if isRoad then
-            GreyRouter._roadMatCount = GreyRouter._roadMatCount + 1
-            if name ~= nil then roadNames[name] = true end
+    local hist = {}        -- materialId -> sample count
+    local samples = 0
+    for _, spline in pairs(splines) do
+        local len = (getSplineLength ~= nil and getSplineLength(spline)) or 0
+        if type(len) == "number" and len > 0 then
+            local n = math.max(2, math.floor(len / 5))   -- ~every 5 m
+            for i = 0, n do
+                local x, _, z = getSplinePosition(spline, i / n)
+                if x ~= nil and z ~= nil then
+                    local mid = materialAt(x, z)
+                    if mid ~= nil and not isFieldAt(x, z) then
+                        hist[mid] = (hist[mid] or 0) + 1
+                        samples = samples + 1
+                    end
+                end
+            end
         end
     end
-    local rl, al = {}, {}
-    for n in pairs(roadNames) do rl[#rl + 1] = n end
-    for n in pairs(allNames) do al[#al + 1] = n end
-    table.sort(rl); table.sort(al)
-    log("RoadMaterials: %d Strassen-Materialien | road=[%s] | alle=[%s]",
-        GreyRouter._roadMatCount, table.concat(rl, ","), table.concat(al, ","))
+    -- A material counts as road if seen on >=3 spline samples (kills stray edge hits).
+    local list = {}
+    for mid, c in pairs(hist) do
+        if c >= 3 then
+            GreyRouter._roadMat[mid] = true
+            GreyRouter._roadMatCount = GreyRouter._roadMatCount + 1
+        end
+        list[#list + 1] = string.format("%s:%d", tostring(mid), c)
+    end
+    table.sort(list)
+    log("RoadMaterials: %d Strassen-Materialien aus %d Spline-Samples | Histogramm=[%s]",
+        GreyRouter._roadMatCount, samples, table.concat(list, " "))
     return GreyRouter._roadMatCount
+end
+
+-- Runtime learning: the player drives a lane the splines didn't cover (e.g. a field
+-- track) -> adopt its material as road and invalidate the grid cache so route + overlay
+-- pick it up. This is the "navi adapts to where I actually drive" behaviour.
+function GreyRouter.learnMaterial(mid)
+    if mid == nil then return end
+    if GreyRouter._roadMatCount == 0 then return end   -- colour-fallback map: don't learn
+    if GreyRouter._roadMat[mid] then return end
+    GreyRouter._roadMat[mid] = true
+    GreyRouter._roadMatCount = GreyRouter._roadMatCount + 1
+    GreyRouter._grey = {}            -- drivability changed -> drop cached cells
+    GreyRouter._cacheCount = 0
+    if NaviHelper ~= nil then NaviHelper.greyCells = nil end   -- rebuild overlay on next toggle
+    log("learnMaterial: neues Strassen-Material %s gelernt (jetzt %d)", tostring(mid), GreyRouter._roadMatCount)
 end
 
 -- Discover the water level once (terrain below it = lake/river bed -> never driveable).
@@ -161,7 +178,8 @@ end
 
 -- Is this position cultivable field ground? Used to reject field tramlines/interiors
 -- that happen to read as tan, so we don't route across fields. (Ported from WayPointGPS.)
-local function isFieldAt(wx, wz)
+-- (Assigns the forward-declared upvalue so buildRoadMaterials can call it.)
+function isFieldAt(wx, wz)
     local m = g_currentMission
     if m == nil then return false end
     local wy = terrainHeight(wx, wz)
@@ -174,6 +192,15 @@ local function isFieldAt(wx, wz)
         if ok and bits ~= nil then return bits ~= 0 end
     end
     return false
+end
+
+-- Public learn-while-driving entry: adopt the material under the tyres as road, unless
+-- the vehicle is on a field or under water. Called from NaviHelper's VTRACK sampler.
+function GreyRouter.maybeLearnAt(wx, wz, mid)
+    if mid == nil then return end
+    if terrainHeight(wx, wz) < waterLevel() - 0.05 then return end
+    if isFieldAt(wx, wz) then return end
+    GreyRouter.learnMaterial(mid)
 end
 
 local function isGreyAt(wx, wz)
