@@ -11,9 +11,9 @@
 
 GreyRouter = {}
 GreyRouter.LOG_PREFIX = "[NaviHelper/Grey]"
-GreyRouter.cell = 6.0        -- m, grid cell size (roads ~8m wide -> centre sampling catches them)
+GreyRouter.cell = 5.0        -- m, grid cell size
 GreyRouter.maxSnap = 70.0    -- m, snap start/dest to nearest grey cell within this
-GreyRouter.satMax = 0.18     -- grey = saturation below this
+GreyRouter.satMax = 0.20     -- grey = saturation below this
 GreyRouter.brightMin = 0.08
 GreyRouter.brightMax = 0.78
 GreyRouter.maxIters = 40000  -- A* safety cap
@@ -38,25 +38,32 @@ local function terrainHeight(x, z)
     return 0
 end
 
--- Is the terrain at cell (cx,cz) grey (a drivable path)? Cached.
+-- Is the terrain at world (wx,wz) grey (low saturation = drivable path)?
+local function isGreyAt(wx, wz)
+    local m = g_currentMission
+    if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return false end
+    local wy = terrainHeight(wx, wz)
+    local ok, r, g, b = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
+    if not ok or r == nil then return false end
+    local mx = math.max(r, math.max(g, b))
+    local mn = math.min(r, math.min(g, b))
+    local sat = (mx > 0.001) and ((mx - mn) / mx) or 0
+    local bright = (r + g + b) / 3
+    return sat < GreyRouter.satMax and bright > GreyRouter.brightMin and bright < GreyRouter.brightMax
+end
+
+-- Is cell (cx,cz) drivable? Grey if a path TOUCHES the cell — sample centre + 4 inner
+-- points so thin/diagonal roads dilate into a connected chain of cells. Cached.
 function GreyRouter.cellGrey(cx, cz)
     local key = cx .. ":" .. cz
     local c = GreyRouter._grey[key]
     if c ~= nil then return c end
-    local m = g_currentMission
-    local grey = false
-    if m ~= nil and m.terrainRootNode ~= nil and getTerrainAttributesAtWorldPos ~= nil then
-        local wx, wz = (cx + 0.5) * GreyRouter.cell, (cz + 0.5) * GreyRouter.cell
-        local wy = terrainHeight(wx, wz)
-        local ok, r, g, b = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
-        if ok and r ~= nil then
-            local mx = math.max(r, math.max(g, b))
-            local mn = math.min(r, math.min(g, b))
-            local sat = (mx > 0.001) and ((mx - mn) / mx) or 0
-            local bright = (r + g + b) / 3
-            grey = sat < GreyRouter.satMax and bright > GreyRouter.brightMin and bright < GreyRouter.brightMax
-        end
-    end
+    local cs = GreyRouter.cell
+    local wx, wz = (cx + 0.5) * cs, (cz + 0.5) * cs
+    local off = cs * 0.45
+    local grey = isGreyAt(wx, wz)
+        or isGreyAt(wx - off, wz) or isGreyAt(wx + off, wz)
+        or isGreyAt(wx, wz - off) or isGreyAt(wx, wz + off)
     GreyRouter._grey[key] = grey
     GreyRouter._cacheCount = GreyRouter._cacheCount + 1
     return grey
