@@ -40,18 +40,38 @@ local function terrainHeight(x, z)
     return 0
 end
 
--- Is the terrain at world (wx,wz) grey (low saturation = drivable path)?
+-- Drivable surface by terrain colour (ported from WayPointGPS): a path is either
+-- GREY (asphalt/concrete, low saturation) OR TAN (beige/brown dirt+gravel lanes).
+-- Tan is what we were missing -> earthy field tracks were rejected as non-road.
+local function isRoadColor(r, g, b)
+    local mx = math.max(r, math.max(g, b))
+    local mn = math.min(r, math.min(g, b))
+    local bright = (r + g + b) / 3
+    local sat = (mx > 0.001) and ((mx - mn) / mx) or 0
+    local greenish = g > r * 1.10 and g > b * 1.10
+    local bluish = b > r * 1.10 and b > g * 1.05
+    local redish = r > g * 1.22 and r > b * 1.22
+    -- grey road
+    if bright > 0.30 and bright < 0.86 and sat < 0.24 and not greenish and not bluish and not redish then
+        return true
+    end
+    -- tan/beige dirt+gravel lane (narrow enough to exclude ripe crops/fields)
+    local greenishT = g > r * 1.08 and g > b * 1.18
+    local bluishT = b > r * 1.08 and b > g * 1.08
+    if bright > 0.28 and bright < 0.78 and sat >= 0.08 and sat < 0.42
+        and r >= g * 0.88 and r > b * 1.12 and g > b * 1.06 and not greenishT and not bluishT then
+        return true
+    end
+    return false
+end
+
 local function isGreyAt(wx, wz)
     local m = g_currentMission
     if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return false end
     local wy = terrainHeight(wx, wz)
     local ok, r, g, b = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
     if not ok or r == nil then return false end
-    local mx = math.max(r, math.max(g, b))
-    local mn = math.min(r, math.min(g, b))
-    local sat = (mx > 0.001) and ((mx - mn) / mx) or 0
-    local bright = (r + g + b) / 3
-    return sat < GreyRouter.satMax and bright > GreyRouter.brightMin and bright < GreyRouter.brightMax
+    return isRoadColor(r, g, b)
 end
 
 -- Is cell (cx,cz) drivable? Grey if a path TOUCHES the cell — sample centre + 4 inner
