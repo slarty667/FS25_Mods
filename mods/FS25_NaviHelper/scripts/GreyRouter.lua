@@ -21,6 +21,10 @@ GreyRouter.maxOffroad = 4    -- cells of non-grey the path may bridge (gate/seam
 GreyRouter.offroadPenalty = 6 -- cost multiplier for non-grey cells (prefer grey strongly)
 GreyRouter._grey = {}        -- cell "cx:cz" -> bool (terrain is static; cache for the session)
 GreyRouter._cacheCount = 0
+GreyRouter._roadMat = {}      -- materialId -> bool (road surface?), resolved lazily
+GreyRouter._roadMatBuilt = false
+GreyRouter._roadMatCount = 0  -- how many materialIds classify as road (0 => fall back to colour)
+GreyRouter._waterY = nil      -- discovered water level (terrain below this = underwater)
 
 local function log(fmt, ...)
     if Logging and Logging.info then Logging.info(GreyRouter.LOG_PREFIX .. " " .. fmt, ...) end
@@ -29,6 +33,10 @@ end
 function GreyRouter.reset()
     GreyRouter._grey = {}
     GreyRouter._cacheCount = 0
+    GreyRouter._roadMat = {}
+    GreyRouter._roadMatBuilt = false
+    GreyRouter._roadMatCount = 0
+    GreyRouter._waterY = nil
 end
 
 local function terrainHeight(x, z)
@@ -66,6 +74,91 @@ local function isRoadColor(r, g, b)
     return false
 end
 
+-- ---------------------------------------------------------------------------
+-- SURFACE-NAME sensor (the real fix). FS25 maps map every painted terrain texture
+-- to a surface sound ("asphalt", "gravel", "dirt", "grass", "field", "water"...).
+-- That name is the SEMANTIC ground truth: a mown meadow reads grey by colour but its
+-- surface is "grass" -> not a road. Colour stays only as fallback for maps that don't
+-- populate the mapping.
+-- ---------------------------------------------------------------------------
+
+-- materialId -> surface name string (or nil). Via mission's material<->sound tables.
+local function surfaceNameFor(materialId)
+    local m = g_currentMission
+    if m == nil or m.materialIdToSurfaceSound == nil or m.surfaceNameToSurfaceSound == nil then return nil end
+    local snd = m.materialIdToSurfaceSound[materialId]
+    if snd == nil then return nil end
+    for name, value in pairs(m.surfaceNameToSurfaceSound) do
+        if value == snd then return tostring(name) end
+    end
+    return nil
+end
+
+-- Does this surface name denote a driveable lane (paved or dirt/gravel track)?
+-- Explicitly reject natural ground (grass/field/water/snow/forest) even if "dirt"-ish.
+local function isRoadSurfaceName(n)
+    if n == nil then return false end
+    n = string.lower(n)
+    if n:find("grass") or n:find("field") or n:find("water") or n:find("river")
+        or n:find("snow") or n:find("forest") or n:find("foliage") or n:find("crop")
+        or n:find("plow") or n:find("sown") or n:find("meadow") then
+        return false
+    end
+    return n:find("asphalt") or n:find("concrete") or n:find("gravel") or n:find("dirt")
+        or n:find("road") or n:find("path") or n:find("track") or n:find("pavement")
+        or n:find("paved") or n:find("cobble") or n:find("stone") or n:find("ground")
+        or n:find("mud") or n:find("sand")
+end
+
+-- Build materialId -> isRoad cache once, by walking the map's material table. Logs the
+-- road surface names found so we can verify the map exposes usable names (else count=0
+-- => colour fallback). Cheap, one-time.
+function GreyRouter.buildRoadMaterials()
+    if GreyRouter._roadMatBuilt then return GreyRouter._roadMatCount end
+    GreyRouter._roadMatBuilt = true
+    local m = g_currentMission
+    if m == nil or m.materialIdToSurfaceSound == nil then
+        log("RoadMaterials: keine materialIdToSurfaceSound -> Farb-Fallback")
+        return 0
+    end
+    local roadNames, allNames = {}, {}
+    for mid, _ in pairs(m.materialIdToSurfaceSound) do
+        local name = surfaceNameFor(mid)
+        local isRoad = isRoadSurfaceName(name)
+        GreyRouter._roadMat[mid] = isRoad
+        if name ~= nil then allNames[name] = true end
+        if isRoad then
+            GreyRouter._roadMatCount = GreyRouter._roadMatCount + 1
+            if name ~= nil then roadNames[name] = true end
+        end
+    end
+    local rl, al = {}, {}
+    for n in pairs(roadNames) do rl[#rl + 1] = n end
+    for n in pairs(allNames) do al[#al + 1] = n end
+    table.sort(rl); table.sort(al)
+    log("RoadMaterials: %d Strassen-Materialien | road=[%s] | alle=[%s]",
+        GreyRouter._roadMatCount, table.concat(rl, ","), table.concat(al, ","))
+    return GreyRouter._roadMatCount
+end
+
+-- Discover the water level once (terrain below it = lake/river bed -> never driveable).
+local function waterLevel()
+    if GreyRouter._waterY ~= nil then return GreyRouter._waterY end
+    local m = g_currentMission
+    local y = nil
+    if m ~= nil then
+        if type(m.waterY) == "number" then y = m.waterY
+        elseif m.environmentAreaSystem ~= nil and type(m.environmentAreaSystem.waterYValue) == "number" then
+            y = m.environmentAreaSystem.waterYValue
+        elseif m.environment ~= nil and type(m.environment.waterLevel) == "number" then
+            y = m.environment.waterLevel
+        end
+    end
+    GreyRouter._waterY = y or -1e9   -- sentinel: "unknown" => never excludes by height
+    if y ~= nil then log("waterLevel = %.2f", y) end
+    return GreyRouter._waterY
+end
+
 -- Is this position cultivable field ground? Used to reject field tramlines/interiors
 -- that happen to read as tan, so we don't route across fields. (Ported from WayPointGPS.)
 local function isFieldAt(wx, wz)
@@ -87,10 +180,18 @@ local function isGreyAt(wx, wz)
     local m = g_currentMission
     if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return false end
     local wy = terrainHeight(wx, wz)
-    local ok, r, g, b = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
+    local ok, r, g, b, _, materialId = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
     if not ok or r == nil then return false end
-    if not isRoadColor(r, g, b) then return false end
-    if isFieldAt(wx, wz) then return false end   -- road-coloured but on a field -> not a lane
+    -- water: terrain below the water plane is a lake/river bed, never a lane
+    if wy < waterLevel() - 0.05 then return false end
+    -- primary sensor: painted surface name. Falls back to colour if the map has no names.
+    local nRoadMat = GreyRouter.buildRoadMaterials()
+    if nRoadMat > 0 then
+        if not GreyRouter._roadMat[materialId] then return false end
+    else
+        if not isRoadColor(r, g, b) then return false end
+    end
+    if isFieldAt(wx, wz) then return false end   -- road-surface but on a field -> not a lane
     return true
 end
 
