@@ -21,7 +21,10 @@ NaviHelper.navAidOn = false   -- User activates with Alt+N; if no target we show
 NaviHelper.pathDirty = true
 NaviHelper.DRIFT_THRESHOLD_SQ = 50 * 50  -- recalc route only after vehicle drifts this far (squared meters)
 NaviHelper.lastRouteUpdateTime = 0
-NaviHelper.routeUpdateInterval = 2000  -- ms: at most once every 2 seconds
+NaviHelper.routeUpdateInterval = 1500  -- ms: route check cadence (off-route reroute responsiveness)
+NaviHelper.offRouteThreshold = 25      -- m: vehicle farther than this from the route line -> reroute
+NaviHelper.offRouteConfirm = 2         -- consecutive off-route checks before rerouting (avoids spurious)
+NaviHelper._offRouteCount = 0
 NaviHelper.lastEffectiveTarget = nil  -- cache last effective target to avoid recalculating every frame
 NaviHelper.lastEffectiveTargetTime = 0
 NaviHelper.effectiveTargetCacheTime = 4000  -- ms: 4s when we have a path; shorter when no path so we retry sooner
@@ -1166,13 +1169,22 @@ function NaviHelper:updateRoute()
         return
     end
 
-    if slot.pathNodes and slot.currentPathIndex then
-        local dx = vx - (slot.lastVehicleX or vx)
-        local dz = vz - (slot.lastVehicleZ or vz)
-        if dx * dx + dz * dz > NaviHelper.DRIFT_THRESHOLD_SQ then
-            NaviHelper.pathDirty = true
-            slot.lastVehicleX = vx
-            slot.lastVehicleZ = vz
+    -- Dynamic rerouting: if the vehicle has left the planned route (missed a turn),
+    -- recompute from the current position — like a real sat-nav. Confirmed over a few
+    -- checks so a brief wide turn or overtake doesn't trigger a needless reroute.
+    if slot.pathNodes and #slot.pathNodes >= 2 then
+        local d = distanceFromPointToPath(vx, vz, slot.pathNodes)
+        if d ~= nil and d > NaviHelper.offRouteThreshold then
+            NaviHelper._offRouteCount = NaviHelper._offRouteCount + 1
+            if NaviHelper._offRouteCount >= NaviHelper.offRouteConfirm then
+                NaviHelper._offRouteCount = 0
+                NaviHelper.pathDirty = true            -- rebuild from current pos next tick
+                NaviHelper.lastEffectiveTarget = nil
+                NaviHelper.lastDistanceUpdateTime = 0
+                log("off-route %.0fm -> Neuberechnung", d)
+            end
+        else
+            NaviHelper._offRouteCount = 0
         end
     end
 end
