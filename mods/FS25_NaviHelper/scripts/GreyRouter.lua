@@ -12,7 +12,9 @@
 GreyRouter = {}
 GreyRouter.LOG_PREFIX = "[NaviHelper/Grey]"
 GreyRouter.cell = 3.0        -- m, grid cell size (fine -> junctions/narrow streets resolve)
-GreyRouter.maxSnap = 70.0    -- m, snap start/dest to nearest drivable cell within this
+GreyRouter.maxSnap = 70.0    -- m, snap START to nearest drivable cell within this
+GreyRouter.maxRoadSnap = 260.0 -- m, snap DEST to nearest ROAD within this (field clicks -> road)
+GreyRouter.heuristicWeight = 1.3 -- weighted A* (>1: fewer iters, slightly suboptimal, still road-hugging)
 GreyRouter.roadDepthMax = 0.1 -- terrain sink-depth <= this = paved/compacted road (measured)
 GreyRouter.maxIters = 200000 -- A* safety cap (cost-gradient explores more road before open)
 GreyRouter.openPenalty = 60  -- step-cost multiplier for drivable-but-not-road cells
@@ -159,6 +161,24 @@ function GreyRouter.findNearestGreyCell(x, z)
     return fbx, fbz
 end
 
+-- Snap a DESTINATION to the nearest ROAD cell within maxRoadSnap (so clicking a field
+-- routes to the road beside it, not into the field). Falls back to nearest drivable.
+function GreyRouter.findNearestRoadCell(x, z)
+    local cell = GreyRouter.cell
+    local scx, scz = math.floor(x / cell), math.floor(z / cell)
+    local maxRing = math.ceil(GreyRouter.maxRoadSnap / cell)
+    for ring = 0, maxRing do
+        for dx = -ring, ring do
+            for dz = -ring, ring do
+                if ring == 0 or math.abs(dx) == ring or math.abs(dz) == ring then
+                    if GreyRouter.cellRoad(scx + dx, scz + dz) then return scx + dx, scz + dz end
+                end
+            end
+        end
+    end
+    return GreyRouter.findNearestGreyCell(x, z)   -- no road in range -> nearest drivable
+end
+
 -- binary min-heap on .f
 local function heapPush(h, item)
     h[#h + 1] = item
@@ -190,7 +210,8 @@ end
 function GreyRouter.astar(scx, scz, dcx, dcz)
     local cell = GreyRouter.cell
     local openPen = GreyRouter.openPenalty
-    local function heur(cx, cz) local dx, dz = cx - dcx, cz - dcz; return math.sqrt(dx * dx + dz * dz) * cell end
+    local W = GreyRouter.heuristicWeight or 1.0
+    local function heur(cx, cz) local dx, dz = cx - dcx, cz - dcz; return math.sqrt(dx * dx + dz * dz) * cell * W end
     local function K(cx, cz) return cx .. ":" .. cz end
     local startKey = K(scx, scz)
     local g = { [startKey] = 0 }
@@ -278,7 +299,7 @@ end
 function GreyRouter.findPath(sx, sz, dx, dz)
     if g_currentMission == nil or getTerrainAttributesAtWorldPos == nil then return nil end
     local scx, scz = GreyRouter.findNearestGreyCell(sx, sz)
-    local dcx, dcz = GreyRouter.findNearestGreyCell(dx, dz)
+    local dcx, dcz = GreyRouter.findNearestRoadCell(dx, dz)
     if scx == nil or dcx == nil then
         local function colAt(x, z)
             local m = g_currentMission
