@@ -609,6 +609,58 @@ if addConsoleCommand ~= nil then
     addConsoleCommand("nhReachMap", "NaviHelper G1: Befahrbarkeits-Heatmap an/aus", "consoleReachMap", NaviHelper)
 end
 
+-- ---- Debug: draw the cells GreyRouter considers DRIVABLE (verify road/track vs grass) ----
+NaviHelper.greyMapOn = false
+NaviHelper.greyCells = nil
+
+function NaviHelper.buildGreyMap(step)
+    step = step or 8
+    if GreyRouter == nil or GreyRouter.cellGrey == nil then return end
+    local m = g_currentMission
+    local ts = (m and m.terrainSize) or 2048
+    local half = ts / 2
+    local cs = GreyRouter.cell
+    local cells = {}
+    local x = -half
+    while x <= half do
+        local z = -half
+        while z <= half do
+            if GreyRouter.cellGrey(math.floor(x / cs), math.floor(z / cs)) then
+                cells[#cells + 1] = { x, z }
+            end
+            z = z + step
+        end
+        x = x + step
+    end
+    NaviHelper.greyCells = cells
+    log("grey map: %d befahrbare Zellen @ %dm", #cells, step)
+end
+
+function NaviHelper._drawGreyMap(aspect)
+    local cells = NaviHelper.greyCells
+    if cells == nil then return end
+    local id = NaviHelper.dotOverlayId
+    local w = 0.0042
+    local h = w * aspect
+    setOverlayColor(id, 0.20, 0.75, 0.95, 0.6)
+    for i = 1, #cells do
+        local sx, sy = worldToMenuMapPos(cells[i][1], cells[i][2])
+        if sx ~= nil then renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h) end
+    end
+    setOverlayColor(id, 1, 1, 1, 1)
+end
+
+function NaviHelper:consoleGreyMap()
+    NaviHelper.greyMapOn = not NaviHelper.greyMapOn
+    if NaviHelper.greyMapOn and NaviHelper.greyCells == nil then NaviHelper.buildGreyMap(8) end
+    return "grey/befahrbar-Overlay " .. (NaviHelper.greyMapOn and "AN" or "aus")
+        .. (NaviHelper.greyCells and (" (" .. #NaviHelper.greyCells .. " Zellen)") or "")
+end
+
+if addConsoleCommand ~= nil then
+    addConsoleCommand("nhGrey", "NaviHelper: befahrbare Zellen (GreyRouter) auf Karte zeichnen", "consoleGreyMap", NaviHelper)
+end
+
 -- ---- POC-H: draw the loaded pre-baked road graph on the map (orientation check) ----
 NaviHelper.roadFileOn = false
 
@@ -692,6 +744,11 @@ function NaviHelper._drawMenuMapInner()
     -- POC-H overlay: pre-baked road graph (toggle with console command "nhRoadFile").
     if NaviHelper.roadFileOn then
         NaviHelper._drawRoadFile(aspect)
+    end
+
+    -- Debug overlay: GreyRouter drivable cells (toggle with console command "nhGrey").
+    if NaviHelper.greyMapOn and NaviHelper.greyCells ~= nil then
+        NaviHelper._drawGreyMap(aspect)
     end
 
     local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
