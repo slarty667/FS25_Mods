@@ -1278,10 +1278,6 @@ function NaviHelper:update(dt)
             if ok then
                 if materialId ~= nil then mid = tostring(materialId) end
                 cr, cg, cb = r or -1, g or -1, b or -1
-                -- learn-while-driving: adopt the lane material I'm actually driving on
-                if GreyRouter ~= nil and GreyRouter.maybeLearnAt ~= nil then
-                    pcall(GreyRouter.maybeLearnAt, x, z, materialId)
-                end
             end
         end
         log("VTRACK %.1f %.1f mat=%s rgb=%.3f,%.3f,%.3f", x, z, mid, cr, cg, cb)

@@ -21,9 +21,6 @@ GreyRouter.maxOffroad = 4    -- cells of non-grey the path may bridge (gate/seam
 GreyRouter.offroadPenalty = 6 -- cost multiplier for non-grey cells (prefer grey strongly)
 GreyRouter._grey = {}        -- cell "cx:cz" -> bool (terrain is static; cache for the session)
 GreyRouter._cacheCount = 0
-GreyRouter._roadMat = {}      -- materialId -> bool (road surface?), resolved lazily
-GreyRouter._roadMatBuilt = false
-GreyRouter._roadMatCount = 0  -- how many materialIds classify as road (0 => fall back to colour)
 GreyRouter._waterY = nil      -- discovered water level (terrain below this = underwater)
 
 local function log(fmt, ...)
@@ -33,9 +30,6 @@ end
 function GreyRouter.reset()
     GreyRouter._grey = {}
     GreyRouter._cacheCount = 0
-    GreyRouter._roadMat = {}
-    GreyRouter._roadMatBuilt = false
-    GreyRouter._roadMatCount = 0
     GreyRouter._waterY = nil
 end
 
@@ -48,115 +42,64 @@ local function terrainHeight(x, z)
     return 0
 end
 
--- Drivable surface by terrain colour (ported from WayPointGPS): a path is either
--- GREY (asphalt/concrete, low saturation) OR TAN (beige/brown dirt+gravel lanes).
--- Tan is what we were missing -> earthy field tracks were rejected as non-road.
-local function isRoadColor(r, g, b)
+-- ---------------------------------------------------------------------------
+-- Drivability by terrain COLOUR + SHAPE (faithful port of WayPointGPS's
+-- classifyRouteGraphRoadCellStrict). On maps like Helden the road shares its terrain
+-- MATERIAL (mat 7) and base colour with the surrounding open ground, so neither
+-- materialId nor a bare colour test can separate road from meadow. WPGPS's trick: a
+-- road cell is road-coloured AND part of a CONTINUOUS coloured run (a lane), not an
+-- isolated patch -> kills meadow/yard/schlieren false positives. Plus explicit WATER
+-- rejection (blue colour / water plane) -> kills the lake.
+-- ---------------------------------------------------------------------------
+
+local function colorStats(r, g, b)
     local mx = math.max(r, math.max(g, b))
     local mn = math.min(r, math.min(g, b))
     local bright = (r + g + b) / 3
     local sat = (mx > 0.001) and ((mx - mn) / mx) or 0
+    return bright, sat
+end
+
+-- grey asphalt/concrete: low saturation, neutral hue. Floor 0.12 (Helden roads ~0.284).
+local function isGreyColor(r, g, b)
+    local bright, sat = colorStats(r, g, b)
     local greenish = g > r * 1.10 and g > b * 1.10
     local bluish = b > r * 1.10 and b > g * 1.05
     local redish = r > g * 1.22 and r > b * 1.22
-    -- grey road. Floor lowered from WayPointGPS's 0.30: Helden's grey roads are ~0.284,
-    -- darker than the maps WPGPS was tuned for. Hue exclusions keep grass/fields out.
-    if bright > 0.12 and bright < 0.86 and sat < 0.24 and not greenish and not bluish and not redish then
-        return true
-    end
-    -- tan/beige dirt+gravel lane (narrow enough to exclude ripe crops/fields)
-    local greenishT = g > r * 1.08 and g > b * 1.18
-    local bluishT = b > r * 1.08 and b > g * 1.08
-    if bright > 0.28 and bright < 0.78 and sat >= 0.08 and sat < 0.42
-        and r >= g * 0.88 and r > b * 1.12 and g > b * 1.06 and not greenishT and not bluishT then
-        return true
-    end
-    return false
+    return bright > 0.12 and bright < 0.86 and sat < 0.24 and not greenish and not bluish and not redish
 end
 
--- ---------------------------------------------------------------------------
--- SURFACE-NAME sensor (the real fix). FS25 maps map every painted terrain texture
--- to a surface sound ("asphalt", "gravel", "dirt", "grass", "field", "water"...).
--- That name is the SEMANTIC ground truth: a mown meadow reads grey by colour but its
--- surface is "grass" -> not a road. Colour stays only as fallback for maps that don't
--- populate the mapping.
--- ---------------------------------------------------------------------------
+-- tan/beige dirt+gravel lane (narrow window so ripe crops/field fill don't qualify)
+local function isTanColor(r, g, b)
+    local bright, sat = colorStats(r, g, b)
+    local greenish = g > r * 1.08 and g > b * 1.18
+    local bluish = b > r * 1.08 and b > g * 1.08
+    return bright > 0.28 and bright < 0.78 and sat >= 0.08 and sat < 0.42
+        and r >= g * 0.88 and r > b * 1.12 and g > b * 1.06 and not greenish and not bluish
+end
 
--- materialId at a world position (the painted terrain texture index). Discrete and
--- map-agnostic: on Helden the road reads mat=7. This is our road fingerprint.
-local function materialAt(wx, wz)
+-- blue/cyan water colour (port of WPGPS.isBlueWaterColor) -> the lake bed reads blue.
+local function isWaterColor(r, g, b)
+    local bright, sat = colorStats(r, g, b)
+    local blueDominant = b > r * 1.18 and b > g * 1.04
+    local cyanWater = b > r * 1.10 and g > r * 1.08 and b >= g * 0.92
+    local notGrey = sat > 0.12
+    local notGreen = not (g > b * 1.10 and g > r * 1.20)
+    return bright > 0.18 and bright < 0.92 and notGrey and notGreen and (blueDominant or cyanWater)
+end
+
+-- terrain colour at a world position -> r,g,b or nil
+local function surfaceColorAt(wx, wz)
     local m = g_currentMission
     if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return nil end
     local wy = terrainHeight(wx, wz)
-    local ok, _, _, _, _, materialId = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
-    if ok then return materialId end
+    local ok, r, g, b = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
+    if ok and r ~= nil then return r, g, b end
     return nil
 end
 
 -- forward decl (defined below)
 local isFieldAt
-
--- Learn the set of road materialIds by sampling the map's built-in AI road splines:
--- those splines lie on real roads by definition, so the terrain material under them IS
--- the road material. No name table, no colour, no calibration. Materials seen often
--- enough become "road"; lake/meadow have other materials => excluded for free.
-function GreyRouter.buildRoadMaterials()
-    if GreyRouter._roadMatBuilt then return GreyRouter._roadMatCount end
-    GreyRouter._roadMatBuilt = true
-    local m = g_currentMission
-    local ai = m and m.aiSystem
-    local splines = ai and ai.roadSplines
-    if splines == nil or getSplinePosition == nil then
-        log("RoadMaterials: keine roadSplines -> Farb-Fallback")
-        return 0
-    end
-    local hist = {}        -- materialId -> sample count
-    local samples = 0
-    for _, spline in pairs(splines) do
-        local len = (getSplineLength ~= nil and getSplineLength(spline)) or 0
-        if type(len) == "number" and len > 0 then
-            local n = math.max(2, math.floor(len / 5))   -- ~every 5 m
-            for i = 0, n do
-                local x, _, z = getSplinePosition(spline, i / n)
-                if x ~= nil and z ~= nil then
-                    local mid = materialAt(x, z)
-                    if mid ~= nil and not isFieldAt(x, z) then
-                        hist[mid] = (hist[mid] or 0) + 1
-                        samples = samples + 1
-                    end
-                end
-            end
-        end
-    end
-    -- A material counts as road if seen on >=3 spline samples (kills stray edge hits).
-    local list = {}
-    for mid, c in pairs(hist) do
-        if c >= 3 then
-            GreyRouter._roadMat[mid] = true
-            GreyRouter._roadMatCount = GreyRouter._roadMatCount + 1
-        end
-        list[#list + 1] = string.format("%s:%d", tostring(mid), c)
-    end
-    table.sort(list)
-    log("RoadMaterials: %d Strassen-Materialien aus %d Spline-Samples | Histogramm=[%s]",
-        GreyRouter._roadMatCount, samples, table.concat(list, " "))
-    return GreyRouter._roadMatCount
-end
-
--- Runtime learning: the player drives a lane the splines didn't cover (e.g. a field
--- track) -> adopt its material as road and invalidate the grid cache so route + overlay
--- pick it up. This is the "navi adapts to where I actually drive" behaviour.
-function GreyRouter.learnMaterial(mid)
-    if mid == nil then return end
-    if GreyRouter._roadMatCount == 0 then return end   -- colour-fallback map: don't learn
-    if GreyRouter._roadMat[mid] then return end
-    GreyRouter._roadMat[mid] = true
-    GreyRouter._roadMatCount = GreyRouter._roadMatCount + 1
-    GreyRouter._grey = {}            -- drivability changed -> drop cached cells
-    GreyRouter._cacheCount = 0
-    if NaviHelper ~= nil then NaviHelper.greyCells = nil end   -- rebuild overlay on next toggle
-    log("learnMaterial: neues Strassen-Material %s gelernt (jetzt %d)", tostring(mid), GreyRouter._roadMatCount)
-end
 
 -- Discover the water level once (terrain below it = lake/river bed -> never driveable).
 local function waterLevel()
@@ -178,7 +121,7 @@ end
 
 -- Is this position cultivable field ground? Used to reject field tramlines/interiors
 -- that happen to read as tan, so we don't route across fields. (Ported from WayPointGPS.)
--- (Assigns the forward-declared upvalue so buildRoadMaterials can call it.)
+-- (Assigns the forward-declared upvalue so the helpers above can call it.)
 function isFieldAt(wx, wz)
     local m = g_currentMission
     if m == nil then return false end
@@ -194,32 +137,79 @@ function isFieldAt(wx, wz)
     return false
 end
 
--- Public learn-while-driving entry: adopt the material under the tyres as road, unless
--- the vehicle is on a field or under water. Called from NaviHelper's VTRACK sampler.
-function GreyRouter.maybeLearnAt(wx, wz, mid)
-    if mid == nil then return end
-    if terrainHeight(wx, wz) < waterLevel() - 0.05 then return end
-    if isFieldAt(wx, wz) then return end
-    GreyRouter.learnMaterial(mid)
+-- Water at a world position: blue/cyan terrain colour, an engine water-plane query,
+-- or terrain below the discovered water level. (Port of WPGPS.isWaterAtWorldPos.)
+local function isWaterAt(wx, wz)
+    local r, g, b = surfaceColorAt(wx, wz)
+    if r ~= nil and isWaterColor(r, g, b) then return true end
+    local y = terrainHeight(wx, wz)
+    local globals = { "getWaterYAtWorldPos", "getWaterYAtWorldPosition", "getWaterHeightAtWorldPos", "getWaterHeightAtWorldPosition" }
+    for _, fnName in ipairs(globals) do
+        local fn = _G[fnName]
+        if type(fn) == "function" then
+            local ok, wy = pcall(fn, wx, y + 3.0, wz)
+            if ok and type(wy) == "number" and wy > -1000 and math.abs(wy - y) < 8.0 then return true end
+        end
+    end
+    if y < waterLevel() - 0.05 then return true end
+    return false
 end
 
+-- road-coloured (grey or tan) at a position, ignoring shape -> used by continuity scan
+local function isRoadColorAt(wx, wz)
+    local r, g, b = surfaceColorAt(wx, wz)
+    if r == nil then return false end
+    return isGreyColor(r, g, b) or isTanColor(r, g, b)
+end
+
+-- A lone road-coloured pixel can be a yard, a field edge, or a lighting "schliere".
+-- Require a continuous road-coloured run on at least one axis (8 & 16 m out, both
+-- sides) -> only real lanes qualify. (Port of WPGPS.hasVisualRoadContinuity.)
+local function hasContinuity(wx, wz)
+    local d1, d2 = 8.0, 16.0
+    local ns = 0
+    if isRoadColorAt(wx, wz + d1) and not isFieldAt(wx, wz + d1) then ns = ns + 1 end
+    if isRoadColorAt(wx, wz - d1) and not isFieldAt(wx, wz - d1) then ns = ns + 1 end
+    if isRoadColorAt(wx, wz + d2) and not isFieldAt(wx, wz + d2) then ns = ns + 1 end
+    if isRoadColorAt(wx, wz - d2) and not isFieldAt(wx, wz - d2) then ns = ns + 1 end
+    local ew = 0
+    if isRoadColorAt(wx + d1, wz) and not isFieldAt(wx + d1, wz) then ew = ew + 1 end
+    if isRoadColorAt(wx - d1, wz) and not isFieldAt(wx - d1, wz) then ew = ew + 1 end
+    if isRoadColorAt(wx + d2, wz) and not isFieldAt(wx + d2, wz) then ew = ew + 1 end
+    if isRoadColorAt(wx - d2, wz) and not isFieldAt(wx - d2, wz) then ew = ew + 1 end
+    return ns >= 2 or ew >= 2
+end
+
+-- A narrow lane running between field edges on both sides (port of
+-- WPGPS.hasNarrowCorridorShape) -> extra acceptance for tan dirt field tracks.
+local SIDE_SAMPLE, FORWARD_SAMPLE, FAR_SIDE_SAMPLE = 14.0, 18.0, 30.0
+local function hasCorridor(wx, wz)
+    local f, s, fs = FORWARD_SAMPLE, SIDE_SAMPLE, FAR_SIDE_SAMPLE
+    local nsF, nsB = not isFieldAt(wx, wz + f), not isFieldAt(wx, wz - f)
+    local nsEdges = 0
+    if isFieldAt(wx + s, wz) then nsEdges = nsEdges + 1 end
+    if isFieldAt(wx - s, wz) then nsEdges = nsEdges + 1 end
+    if isFieldAt(wx + fs, wz) then nsEdges = nsEdges + 1 end
+    if isFieldAt(wx - fs, wz) then nsEdges = nsEdges + 1 end
+    local ewF, ewB = not isFieldAt(wx + f, wz), not isFieldAt(wx - f, wz)
+    local ewEdges = 0
+    if isFieldAt(wx, wz + s) then ewEdges = ewEdges + 1 end
+    if isFieldAt(wx, wz - s) then ewEdges = ewEdges + 1 end
+    if isFieldAt(wx, wz + fs) then ewEdges = ewEdges + 1 end
+    if isFieldAt(wx, wz - fs) then ewEdges = ewEdges + 1 end
+    return (nsF and nsB and nsEdges >= 2) or (ewF and ewB and ewEdges >= 2)
+end
+
+-- Driveable lane test (WPGPS classifyRouteGraphRoadCellStrict, distilled to a bool):
+-- not water, not field, and (grey + continuity) or (tan + (continuity or corridor)).
 local function isGreyAt(wx, wz)
-    local m = g_currentMission
-    if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return false end
-    local wy = terrainHeight(wx, wz)
-    local ok, r, g, b, _, materialId = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
-    if not ok or r == nil then return false end
-    -- water: terrain below the water plane is a lake/river bed, never a lane
-    if wy < waterLevel() - 0.05 then return false end
-    -- primary sensor: painted surface name. Falls back to colour if the map has no names.
-    local nRoadMat = GreyRouter.buildRoadMaterials()
-    if nRoadMat > 0 then
-        if not GreyRouter._roadMat[materialId] then return false end
-    else
-        if not isRoadColor(r, g, b) then return false end
-    end
-    if isFieldAt(wx, wz) then return false end   -- road-surface but on a field -> not a lane
-    return true
+    local r, g, b = surfaceColorAt(wx, wz)
+    if r == nil then return false end
+    if isWaterAt(wx, wz) then return false end
+    if isFieldAt(wx, wz) then return false end
+    if isGreyColor(r, g, b) and hasContinuity(wx, wz) then return true end
+    if isTanColor(r, g, b) and (hasContinuity(wx, wz) or hasCorridor(wx, wz)) then return true end
+    return false
 end
 
 -- Is cell (cx,cz) drivable? Grey if a path TOUCHES the cell — sample centre + 4 inner
