@@ -66,13 +66,32 @@ local function isRoadColor(r, g, b)
     return false
 end
 
+-- Is this position cultivable field ground? Used to reject field tramlines/interiors
+-- that happen to read as tan, so we don't route across fields. (Ported from WayPointGPS.)
+local function isFieldAt(wx, wz)
+    local m = g_currentMission
+    if m == nil then return false end
+    local wy = terrainHeight(wx, wz)
+    if FSDensityMapUtil ~= nil and type(FSDensityMapUtil.getFieldDataAtWorldPosition) == "function" then
+        local ok, onField = pcall(FSDensityMapUtil.getFieldDataAtWorldPosition, wx, wy, wz)
+        if ok and onField ~= nil then return onField == true end
+    end
+    if m.terrainDetailId ~= nil and getDensityAtWorldPos ~= nil then
+        local ok, bits = pcall(getDensityAtWorldPos, m.terrainDetailId, wx, wy, wz)
+        if ok and bits ~= nil then return bits ~= 0 end
+    end
+    return false
+end
+
 local function isGreyAt(wx, wz)
     local m = g_currentMission
     if m == nil or m.terrainRootNode == nil or getTerrainAttributesAtWorldPos == nil then return false end
     local wy = terrainHeight(wx, wz)
     local ok, r, g, b = pcall(getTerrainAttributesAtWorldPos, m.terrainRootNode, wx, wy, wz, true, true, true, true, false)
     if not ok or r == nil then return false end
-    return isRoadColor(r, g, b)
+    if not isRoadColor(r, g, b) then return false end
+    if isFieldAt(wx, wz) then return false end   -- road-coloured but on a field -> not a lane
+    return true
 end
 
 -- Is cell (cx,cz) drivable? Grey if a path TOUCHES the cell — sample centre + 4 inner
