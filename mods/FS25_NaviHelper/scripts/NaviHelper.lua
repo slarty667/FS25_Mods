@@ -1189,7 +1189,19 @@ function NaviHelper:update(dt)
         end
         NaviHelper._vtrackAt = t
         NaviHelper._vtrackLast = { x, z }
-        log("VTRACK %.1f %.1f", x, z)
+        -- also sample the ground material under the tyres (road-material detection)
+        local mid = "?"
+        if getTerrainAttributesAtWorldPos ~= nil and g_currentMission.terrainRootNode ~= nil then
+            local ty = 0
+            if getTerrainHeightAtWorldPos ~= nil then
+                local okh, h = pcall(getTerrainHeightAtWorldPos, g_currentMission.terrainRootNode, x, 0, z)
+                if okh and h then ty = h end
+            end
+            local ok, _, _, _, _, materialId = pcall(getTerrainAttributesAtWorldPos,
+                g_currentMission.terrainRootNode, x, ty, z, true, true, true, true, false)
+            if ok and materialId ~= nil then mid = tostring(materialId) end
+        end
+        log("VTRACK %.1f %.1f mat=%s", x, z, mid)
     end)
     local ok, err = pcall(function()
         local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
