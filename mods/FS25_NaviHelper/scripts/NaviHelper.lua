@@ -1144,7 +1144,7 @@ end
 -- Build a polyline through vehicle -> route waypoints -> destination.
 -- Hybrid: each segment is routed via AutoDrive roads when available, else a
 -- straight line. Segment ends are de-duplicated so the line is continuous.
-function NaviHelper:buildRoutePath(route, vx, vz)
+function NaviHelper:buildRoutePath(route, vx, vz, hdx, hdz)
     if not route or #route == 0 then return nil end
 
     -- Drive sequence: current vehicle position, then every route point in order.
@@ -1163,8 +1163,11 @@ function NaviHelper:buildRoutePath(route, vx, vz)
         local a, b = seq[i], seq[i + 1]
         local seg
         -- Priority 1: grey-terrain grid router — roads/streets/tracks on ANY map, no calibration.
+        -- Pass the vehicle heading on the FIRST segment so the route won't open with a U-turn.
         if GreyRouter and GreyRouter.findPath then
-            local ok, path = pcall(GreyRouter.findPath, a.x, a.z, b.x, b.z)
+            local sdx, sdz
+            if i == 1 then sdx, sdz = hdx, hdz end
+            local ok, path = pcall(GreyRouter.findPath, a.x, a.z, b.x, b.z, sdx, sdz)
             if ok and path and #path > 0 then seg = path; greyRouted = greyRouted + 1 end
         end
         -- Priority 2: pre-baked road graph (processed map), if present.
@@ -1218,7 +1221,12 @@ function NaviHelper:updateRoute()
     if not vx or not vz then return end
 
     if NaviHelper.pathDirty then
-        slot.pathNodes = self:buildRoutePath(slot.route, vx, vz)
+        local hdx, hdz
+        if vehicle.rootNode ~= nil and localDirectionToWorld ~= nil then
+            local ok, dx, _, dz = pcall(localDirectionToWorld, vehicle.rootNode, 0, 0, 1)
+            if ok and dx ~= nil then hdx, hdz = dx, dz end
+        end
+        slot.pathNodes = self:buildRoutePath(slot.route, vx, vz, hdx, hdz)
         slot.currentPathIndex = 1
         NaviHelper.pathDirty = false
         slot.lastVehicleX = vx

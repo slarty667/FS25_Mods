@@ -21,6 +21,8 @@ GreyRouter.openPenalty = 3   -- step-cost multiplier for drivable-but-not-road c
                              -- (verge/forest/meadow/dirt-track). Modest: roads are preferred,
                              -- but a short Feldweg/green shortcut beats a long tarmac detour.
                              -- (60 was far too high -> router took absurd road loops.)
+GreyRouter.startTurnPenalty = 55 -- extra cost on the FIRST move per 45 deg away from the
+                             -- vehicle's heading (U-turn = 4x). "Wenden ist viel teurer."
 GreyRouter._grey = {}        -- cell "cx:cz" -> class string (terrain static; cache per session)
 GreyRouter._cacheCount = 0
 
@@ -206,12 +208,32 @@ local function heapPop(h)
     return top
 end
 
+-- 8-neighbour direction index 0..7 (CCW from +x), and the 45-degree-step difference
+-- between two directions (0=straight .. 4=U-turn). Used for the start-turn penalty.
+local DIR_INDEX = {
+    ["1:0"] = 0, ["1:1"] = 1, ["0:1"] = 2, ["-1:1"] = 3,
+    ["-1:0"] = 4, ["-1:-1"] = 5, ["0:-1"] = 6, ["1:-1"] = 7,
+}
+local function moveDirIndex(dx, dz) return DIR_INDEX[dx .. ":" .. dz] end
+local function dirSteps(a, b) local d = math.abs(a - b); return math.min(d, 8 - d) end
+-- Quantise a world heading vector to the nearest of 8 grid directions, or nil.
+local function quantiseHeading(hx, hz)
+    if hx == nil or hz == nil or (hx == 0 and hz == 0) then return nil end
+    local ang = math.atan2(hz, hx)                 -- -pi..pi
+    local idx = math.floor(ang / (math.pi / 4) + 0.5) % 8
+    if idx < 0 then idx = idx + 8 end
+    return idx
+end
+
 -- Cost-gradient A*: every non-blocked cell is traversable, but an "open" step costs
 -- openPenalty x more than a "road" step, so the path hugs the road network and only
 -- dips onto the verge for short, unavoidable connectors (vanilla / WayPointGPS style).
-function GreyRouter.astar(scx, scz, dcx, dcz)
+-- startDir (0..7 or nil): vehicle heading -> the first move away from it is penalised
+-- (startTurnPenalty per 45 deg) so the route never opens with a needless U-turn.
+function GreyRouter.astar(scx, scz, dcx, dcz, startDir)
     local cell = GreyRouter.cell
     local openPen = GreyRouter.openPenalty
+    local turnPen = GreyRouter.startTurnPenalty or 0
     local W = GreyRouter.heuristicWeight or 1.0
     local function heur(cx, cz) local dx, dz = cx - dcx, cz - dcz; return math.sqrt(dx * dx + dz * dz) * cell * W end
     local function K(cx, cz) return cx .. ":" .. cz end
@@ -248,6 +270,11 @@ function GreyRouter.astar(scx, scz, dcx, dcz)
                             if not closed[nk] then
                                 local base = (dx == 0 or dz == 0) and cell or (cell * 1.41421)
                                 local stepCost = (cls == "road") and base or (base * openPen)
+                                -- start-turn penalty: only on the very first move, vs heading
+                                if cur.key == startKey and startDir ~= nil and turnPen > 0 then
+                                    local md = moveDirIndex(dx, dz)
+                                    if md ~= nil then stepCost = stepCost + turnPen * dirSteps(startDir, md) end
+                                end
                                 local tentative = g[cur.key] + stepCost
                                 if tentative < (g[nk] or 1e18) then
                                     g[nk] = tentative
@@ -298,10 +325,12 @@ local function smooth(pts)
 end
 
 -- Public: world path (list of {x,y,z}) following grey terrain from start to dest, or nil.
-function GreyRouter.findPath(sx, sz, dx, dz)
+-- hdx,hdz (optional): vehicle heading vector -> the route won't open with a U-turn.
+function GreyRouter.findPath(sx, sz, dx, dz, hdx, hdz)
     if g_currentMission == nil or getTerrainAttributesAtWorldPos == nil then return nil end
     local scx, scz = GreyRouter.findNearestGreyCell(sx, sz)
     local dcx, dcz = GreyRouter.findNearestRoadCell(dx, dz)
+    local startDir = quantiseHeading(hdx, hdz)
     if scx == nil or dcx == nil then
         local function colAt(x, z)
             local m = g_currentMission
@@ -315,7 +344,7 @@ function GreyRouter.findPath(sx, sz, dx, dz)
             tostring(scx ~= nil), tostring(dcx ~= nil), sr, sg, sb, dr, dg, db)
         return nil
     end
-    local cells, iters = GreyRouter.astar(scx, scz, dcx, dcz)
+    local cells, iters = GreyRouter.astar(scx, scz, dcx, dcz, startDir)
     if cells == nil then
         log("findPath: A* kein Pfad (%d iters)", iters)
         return nil
