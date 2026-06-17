@@ -404,8 +404,12 @@ function RoadStats.probeSplines()
     end
 
     local m = g_currentMission
-    for _, r in ipairs({ m and m.terrainRootNode, m and m.rootNode, m and m.mapRootNode }) do
-        if r ~= nil then walk(r, "", 0) end
+    local roots = { m and m.terrainRootNode, m and m.rootNode, m and m.mapRootNode }
+    if m ~= nil and m.trafficSystem ~= nil then roots[#roots + 1] = m.trafficSystem.rootNodeId end
+    if m ~= nil and m.aiSystem ~= nil then roots[#roots + 1] = m.aiSystem.rootNode end
+    local seenRoot = {}
+    for _, r in ipairs(roots) do
+        if r ~= nil and not seenRoot[r] then seenRoot[r] = true; walk(r, "", 0) end
     end
     log("SPLINES (Szenen-Scan): %d gesamt, ~%.0fm | road/street=%d field=%d water/rail=%d other=%d (gescannt=%d)",
         total, sumLen, cat.road, cat.field, cat.water, cat.other, scanned)
@@ -425,7 +429,15 @@ function RoadStats.probeSplines()
     end
     if m ~= nil and m.aiSystem ~= nil then
         local c, l = tableSplineStats(m.aiSystem.roadSplines)
-        log("  aiSystem.roadSplines direkt: %d Splines, %.0fm", c, l)
+        -- how many of those pass the SHAPE check the scene scan uses?
+        local shapePass = 0
+        if type(m.aiSystem.roadSplines) == "table" and getHasClassId ~= nil and ClassIds and ClassIds.SHAPE then
+            for _, node in pairs(m.aiSystem.roadSplines) do
+                local ok, isShape = pcall(getHasClassId, node, ClassIds.SHAPE)
+                if ok and isShape then shapePass = shapePass + 1 end
+            end
+        end
+        log("  aiSystem.roadSplines direkt: %d Splines, %.0fm | davon SHAPE-Check ok: %d", c, l, shapePass)
     end
     if m ~= nil and m.trafficSystem ~= nil then
         local ts = m.trafficSystem
