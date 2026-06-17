@@ -298,6 +298,18 @@ große Snap-Distanzen. Fixes (Reihenfolge offen):
 - evtl. Off-road-Anschluss übers Drivability-/Gelände statt stur Luftlinie.
 Fixes committet bis 1dbb875. Mechanik steht; nächster Hebel = Graph-Vollständigkeit.
 
+## Spline-Inventur Helden (2026-06-17) — Bild-Weg bestätigt richtig
+Frage: liefert der WayPointGPS-Spline-Weg auch Dorfstraßen/Feldwege ohne KI-Verkehr?
+nhSplines-Probe (scannt aiSystem + trafficSystem.rootNodeId + Szenen-Graph):
+- aiSystem.roadSplines: 19 Splines, 12.638 m (SHAPE-Check ok=19).
+- trafficSystem.rootNodeId: 2 Splines, 12.043 m. Sonst im Szenen-Graph: 0.
+- = alles dasselbe Haupt-Verkehrsnetz (~12 km). Dorfstraßen + Feldwege sind auf Helden
+  **NUR TEXTUR, keine Splines** → kein Spline-Ansatz (auch WayPointGPS nicht) findet sie;
+  WPGPS fällt dort auf Luftlinie/Terrain zurück.
+ENTSCHEIDUNG: Bild-Extraktion + Kalibrierung BLEIBT der Hauptweg (einzige Quelle für die
+textur-gemalten Wege). Spline-Scan höchstens als optionale Zusatzquelle/Fallback für Maps
+mit fotoreal/texturiertem Overview. Der „Umweg" war berechtigt.
+
 ## POC-H Update 2 (2026-06-17): Kalibrierung gelöst, jetzt Graph-Inhalt
 DURCHBRUCH: Overview↔Engine war ~174° gedreht + 1.551 px/m skaliert (Welt ~2641m >
 Terrain). Per VTRACK-Fahrspur (84 Punkte) mit fit_calib.py (ICP-Similarity) registriert,
