@@ -2,6 +2,50 @@
 
 Übergabe nach einer langen Session. SSoT für den Neustart. Ergänzt `PLAN.md`.
 
+## ⛔ MR. WINSTON WOLF — DEN KNOTEN GELÖST (2026-06-17, abends)
+
+**Die Prämisse "WayPointGPS kann das auf Helden, also können wir das auch" ist FALSCH —
+und der Beweis lag die ganze Zeit ungelesen auf der Platte.**
+
+Niemand hat je `tmp/wpgps/routes/Helden.wpg.xml` geöffnet. Gemessen:
+
+- Die Datei ist ein **vorgebauter, handkuratierter Straßengraph**: `<WayPointGPSRoadGraph>`,
+  `<MapName>Helden</MapName>`, `<GraphType>WayPointGPS</GraphType>`, **10.911 Wegpunkte**
+  mit voller Adjazenz (`out`) + **73 `fieldBranchSeeds`** (Feld-Einfahrten), Spannweite
+  1644×1941 m = die ganze Karte. **WPGPS liefert solche Graphen für 50 Karten mit.**
+- Zum Vergleich: unser Live-Spline-Scan fand auf Helden **19** Splines, die Bild-Extraktion
+  **721** Knoten. WPGPS hat **10.911** — also nicht 5× sondern ~15–575× dichter.
+
+**→ WPGPS folgt dem Feldweg auf Helden NICHT durch Rechnen, sondern durch LADEN
+vorgefertigter Daten.** Die im Code reverse-engineerten Live-Methoden (Szenen-Spline-Scan
+→ Terrain-Farbe → Luftlinie) sind nur die **Fallbacks für Karten OHNE gebündelten Graph** —
+und genau die scheitern auf Helden (unsere Messung Z.323–330 sagte das bereits korrekt).
+
+**Konsequenz für die Abstraktion (Kritiker-Urteil bestätigt):** Textur-only Feldwege haben
+kein trennendes Live-Signal (Fingerprints Straße==Acker byte-identisch, Z.33–34). Sie per
+Terrain/Tiefe/Farbe zu rekonstruieren ist **beweisbar unlösbar**. Die 6 Terrain-Anläufe
+(#3–#8) waren derselbe Grundfehler in 6 Verkleidungen: Topologie (Netzwerk) aus einem
+Pixel-Feld raten.
+
+**Die Ziel-Definition kollidiert mit der Physik. Man kann NICHT beides haben:**
+- *"folge echten Wegen inkl. textur-Feldwege"* ⟹ braucht **vorgebackene/authored Daten**
+  (Bild-Extraktion ODER WPGPS-Graph-Format lesen). Verliert "ohne vorab-Daten".
+- *"jede Karte, ohne vorab-Daten"* ⟹ deckt nur das **echte Netz** ab (Splines/Nav-Agent),
+  Rest **ehrlicher Luftlinien-Stub**. Verliert volle Feldweg-Abdeckung.
+
+**Empfehlung (mit Zahlen, nicht Vibes):**
+1. **Engine-Nav-Agent-Spike** (`createVehicleNavigationAgent`) — nie probiert, Kritiker-Rang 1,
+   eine 20-Min-Messung. Endet terminal (Status-Enum, kein "fast"). Trägt auch "fährt selbst".
+2. **Parallel: WPGPS-Graph-Format als Quelle erschließen.** `Helden.wpg.xml` ist offenes XML,
+   parsebar JETZT. Für die 50 abgedeckten Karten = sofort 10.911-Knoten-Routing in
+   Top-Qualität, ohne eigene Extraktion. Lizenz/Attribution klären.
+3. **Aufhören**, `openPenalty`/Sättigungs-Schwellen zu drehen. Das ist die belegte Sackgasse.
+
+Empirisch in EINER In-Game-Session zu bestätigen (nur Markus): lädt WPGPS auf Markus' Helden
+tatsächlich `Helden.wpg.xml` und folgt es dann dem Feldweg? (bestätigt Pre-Bake-Theorie vor Ort).
+
+Voller RE-Spec der WPGPS-Pfadfindung: siehe `docs/WPGPS_PATHFINDING_SPEC.md` (neu).
+
 ## TL;DR — wo wir stehen
 
 Ziel: Fahrzeug zu einem auf der Karte geklickten Punkt routen, **echten Straßen/Wegen

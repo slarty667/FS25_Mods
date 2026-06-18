@@ -21,9 +21,9 @@ NaviHelper.navAidOn = false   -- User activates with Alt+N; if no target we show
 NaviHelper.pathDirty = true
 NaviHelper.DRIFT_THRESHOLD_SQ = 50 * 50  -- recalc route only after vehicle drifts this far (squared meters)
 NaviHelper.lastRouteUpdateTime = 0
-NaviHelper.routeUpdateInterval = 1500  -- ms: route check cadence (off-route reroute responsiveness)
+NaviHelper.routeUpdateInterval = 400   -- ms: route check cadence (fast off-route reaction, car-navi feel)
 NaviHelper.offRouteThreshold = 25      -- m: vehicle farther than this from the route line -> reroute
-NaviHelper.offRouteConfirm = 2         -- consecutive off-route checks before rerouting (avoids spurious)
+NaviHelper.offRouteConfirm = 2         -- consecutive off-route checks before rerouting (~0.8s at 400ms; avoids spurious)
 NaviHelper._offRouteCount = 0
 NaviHelper.lastEffectiveTarget = nil  -- cache last effective target to avoid recalculating every frame
 NaviHelper.lastEffectiveTargetTime = 0
@@ -1162,23 +1162,33 @@ function NaviHelper:buildRoutePath(route, vx, vz, hdx, hdz)
     for i = 1, #seq - 1 do
         local a, b = seq[i], seq[i + 1]
         local seg
-        -- Priority 1: grey-terrain grid router — roads/streets/tracks on ANY map, no calibration.
-        -- Pass the vehicle heading on the FIRST segment so the route won't open with a U-turn.
-        if GreyRouter and GreyRouter.findPath then
-            local sdx, sdz
-            if i == 1 then sdx, sdz = hdx, hdz end
-            local ok, path = pcall(GreyRouter.findPath, a.x, a.z, b.x, b.z, sdx, sdz)
-            if ok and path and #path > 0 then seg = path; greyRouted = greyRouted + 1 end
+        -- Priority 1: AutoDrive network. This is the map's real, human-built (or AD-generated)
+        -- road graph — the same data WayPointGPS ships pre-baked. It follows actual roads AND
+        -- field tracks wherever the network covers them, which terrain sampling provably cannot.
+        -- When an AD network exists for the map, it is by far the best source, so it wins first.
+        if NaviHelperAD and NaviHelperAD.getPathFromToWorld then
+            -- Pass the vehicle heading on the FIRST segment so AD picks a start node ahead of
+            -- the vehicle instead of demanding a U-turn (GreyRouter's start-turn penalty is
+            -- bypassed when AD routes).
+            local shx, shz
+            if i == 1 then shx, shz = hdx, hdz end
+            local ok, path = pcall(NaviHelperAD.getPathFromToWorld, a.x, a.z, b.x, b.z, shx, shz)
+            if ok and path and #path > 0 then seg = path; adRouted = adRouted + 1 end
         end
-        -- Priority 2: pre-baked road graph (processed map), if present.
+        -- Priority 2: pre-baked road graph (processed map via image extraction), if present.
         if seg == nil and RoadGraphFile and RoadGraphFile.ready and RoadGraphFile.findPath then
             local ok, path = pcall(RoadGraphFile.findPath, a.x, a.z, b.x, b.z)
             if ok and path and #path > 0 then seg = path; roadRouted = roadRouted + 1 end
         end
-        -- Priority 3: AutoDrive (optional).
-        if seg == nil and NaviHelperAD and NaviHelperAD.getPathFromToWorld then
-            local ok, path = pcall(NaviHelperAD.getPathFromToWorld, a.x, a.z, b.x, b.z)
-            if ok and path and #path > 0 then seg = path; adRouted = adRouted + 1 end
+        -- Priority 3: grey-terrain grid router — best-effort fallback on maps WITHOUT an AD
+        -- network. Follows asphalt/main roads reasonably, but cannot separate texture-only field
+        -- tracks from meadow (provably unsolvable), so it ranks below the real graph sources.
+        -- Pass the vehicle heading on the FIRST segment so the route won't open with a U-turn.
+        if seg == nil and GreyRouter and GreyRouter.findPath then
+            local sdx, sdz
+            if i == 1 then sdx, sdz = hdx, hdz end
+            local ok, path = pcall(GreyRouter.findPath, a.x, a.z, b.x, b.z, sdx, sdz)
+            if ok and path and #path > 0 then seg = path; greyRouted = greyRouted + 1 end
         end
         if seg then
             for _, wp in ipairs(seg) do push({ x = wp.x, y = wp.y or 0, z = wp.z }) end
@@ -1220,6 +1230,27 @@ function NaviHelper:updateRoute()
     local vx, _, vz = self:getVehiclePosition(vehicle)
     if not vx or not vz then return end
 
+    -- Dynamic rerouting: if the vehicle has left the planned route (missed a turn, drove against
+    -- AD direction), flag a rebuild — like a real sat-nav. Confirmed over a couple of checks so a
+    -- brief wide turn or overtake doesn't trigger a needless reroute. Detection + rebuild happen in
+    -- the SAME tick (below), so reaction is ~confirm * interval, not one interval longer.
+    if not NaviHelper.pathDirty and slot.pathNodes and #slot.pathNodes >= 2 then
+        local d = distanceFromPointToPath(vx, vz, slot.pathNodes)
+        if d ~= nil and d > NaviHelper.offRouteThreshold then
+            NaviHelper._offRouteCount = NaviHelper._offRouteCount + 1
+            if NaviHelper._offRouteCount >= NaviHelper.offRouteConfirm then
+                NaviHelper._offRouteCount = 0
+                NaviHelper.pathDirty = true
+                NaviHelper.lastEffectiveTarget = nil
+                NaviHelper.lastDistanceUpdateTime = 0
+                log("off-route %.0fm -> Neuberechnung", d)
+            end
+        else
+            NaviHelper._offRouteCount = 0
+        end
+    end
+
+    -- Rebuild now if flagged (manual click OR off-route) — same tick, no extra interval of delay.
     if NaviHelper.pathDirty then
         local hdx, hdz
         if vehicle.rootNode ~= nil and localDirectionToWorld ~= nil then
@@ -1231,26 +1262,6 @@ function NaviHelper:updateRoute()
         NaviHelper.pathDirty = false
         slot.lastVehicleX = vx
         slot.lastVehicleZ = vz
-        return
-    end
-
-    -- Dynamic rerouting: if the vehicle has left the planned route (missed a turn),
-    -- recompute from the current position — like a real sat-nav. Confirmed over a few
-    -- checks so a brief wide turn or overtake doesn't trigger a needless reroute.
-    if slot.pathNodes and #slot.pathNodes >= 2 then
-        local d = distanceFromPointToPath(vx, vz, slot.pathNodes)
-        if d ~= nil and d > NaviHelper.offRouteThreshold then
-            NaviHelper._offRouteCount = NaviHelper._offRouteCount + 1
-            if NaviHelper._offRouteCount >= NaviHelper.offRouteConfirm then
-                NaviHelper._offRouteCount = 0
-                NaviHelper.pathDirty = true            -- rebuild from current pos next tick
-                NaviHelper.lastEffectiveTarget = nil
-                NaviHelper.lastDistanceUpdateTime = 0
-                log("off-route %.0fm -> Neuberechnung", d)
-            end
-        else
-            NaviHelper._offRouteCount = 0
-        end
     end
 end
 
@@ -1395,34 +1406,23 @@ function NaviHelper:computeNavData(vehicle, currentTime)
     }
 end
 
--- Pick the path index to start drawing the route line from: the first node ahead of the
--- vehicle (relaxed tolerance so the line stays visible beside the path), else the closest node.
+-- Pick the path index to start drawing the route line from: the node CLOSEST to the vehicle
+-- (= how far along the route we are), kept one node back for visual continuity. This trims the
+-- line as the vehicle drives so it follows along, instead of trailing from the original start.
 function NaviHelper:routeLineStartIndex(pathToDraw, effPathIdx, vx, vz, vehicle)
-    local startIdx = 1
-    if effPathIdx and effPathIdx > 1 then startIdx = math.max(1, effPathIdx - 1) end
-    if not (vx and vz) then return startIdx end
-
-    local headingY = self:getVehicleHeadingY(vehicle)
-    local headingX, headingZ = math.sin(headingY), math.cos(headingY)
-    local pathIdx = effPathIdx or 1
-    for i = math.max(1, pathIdx - 1), math.min(#pathToDraw, pathIdx + 60) do
-        local node = pathToDraw[i]
-        if node and node.x and node.z then
-            if (node.x - vx) * headingX + (node.z - vz) * headingZ > -50 then
-                return math.max(1, i - 2)
-            end
-        end
+    if not (vx and vz) or not pathToDraw or #pathToDraw == 0 then
+        return math.max(1, effPathIdx or 1)
     end
-    -- Far off path: anchor at the closest node so the line stays visible.
     local bestI, bestDistSq = 1, 1e10
-    for i = 1, math.min(#pathToDraw, pathIdx + 80) do
+    for i = 1, #pathToDraw do
         local node = pathToDraw[i]
         if node and node.x and node.z then
-            local d2 = (node.x - vx) * (node.x - vx) + (node.z - vz) * (node.z - vz)
+            local dx, dz = node.x - vx, node.z - vz
+            local d2 = dx * dx + dz * dz
             if d2 < bestDistSq then bestDistSq = d2; bestI = i end
         end
     end
-    return math.max(1, bestI - 2)
+    return math.max(1, bestI - 1)
 end
 
 -- Draw the route line on the ground (AutoDrive's I3D segments, or a drawDebugLine fallback).
