@@ -1,0 +1,29 @@
+# fsmods configuration — EXAMPLE / template.
+#
+# Copy this file to `profiles.toml` (same folder), then adjust to your machine and run `fsmods`.
+# The live `profiles.toml` is intentionally NOT version-controlled — it is per-machine state
+# (your paths + your curated per-savegame mod sets). `fsmods scan` (re)generates it from your
+# installed mods and savegames; curate it freely afterwards.
+
+[paths]
+library     = "~/FS25_ModLibrary"                                      # where all mod zips live
+mods_folder = "~/Library/Application Support/FarmingSimulator2025/mods"
+savegames   = "~/Library/Application Support/FarmingSimulator2025"
+
+# Function mods: linked into EVERY profile. Add one here once and it lands in all profiles
+# on the next `fsmods use`.
+[global]
+mods = [
+    "FS25_AutoDrive",
+    "FS25_Courseplay",
+    # ... your always-on helper mods
+]
+
+# One set per savegame (map-specific mods). Example — duplicate per savegame:
+[sets.example_map]            # Example Map (savegame1)
+savegame = "savegame1"
+mods = [
+    "FS25_SomeMap",
+    "FS25_SomeEquipmentPack",
+    # ... map-specific mods
+]

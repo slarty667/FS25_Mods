@@ -37,3 +37,6 @@ __pycache__/
 # fsmods runtime state (per-machine, not versioned)
 .fsmods_state.json
 tmp/roadmap/
+
+# fsmods live config (per-machine state; use profiles.toml.example as template)
+tools/fsmods/profiles.toml
