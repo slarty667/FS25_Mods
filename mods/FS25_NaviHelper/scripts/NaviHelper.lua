@@ -57,19 +57,25 @@ NaviHelper.drawVehicle = nil
 -- Per-vehicle cache for manual target (targetX, targetZ, pathNodes) so switching vehicles shows the right path or none.
 NaviHelper.vehicleTargets = {}
 -- Route line config (color RGB 0-1, thickness = scale factor, max segments to draw).
-NaviHelper.routeLineColorR = 0.2
-NaviHelper.routeLineColorG = 0.8
-NaviHelper.routeLineColorB = 0.2
-NaviHelper.routeLineThickness = 1.2  -- scale factor for line thickness (1.0 = default, higher = thicker, uses AutoDrive's I3D system)
+-- Route-line look. With our lineShader: diffuse *= rgb (lit by the world, occluded by objects)
+-- and emissive = rgb*a. Keep it a thin, calm painted stripe — not a glowing carpet:
+--  * thickness ~0.4 = a narrow stripe that sits in the track (1.0+ looks like a 2 m ribbon)
+--  * alpha low so it reads at dusk but never blooms to white where segments overlap
+NaviHelper.routeLineColorR = 0.10
+NaviHelper.routeLineColorG = 0.42
+NaviHelper.routeLineColorB = 0.20
+NaviHelper.routeLineColorA = 0.25  -- emissive strength (rgb*a); low = calm, no white bloom
+NaviHelper.routeLineThickness = 0.40  -- width scale; lower = thinner stripe
 NaviHelper.routeLineMaxSegments = 50  -- segments to draw (was 20 for perf test; 50 for better visibility)
 -- Set false to disable route line on ground (use if ADDrawingManager causes 4 FPS / accumulation).
 NaviHelper.drawRouteOnGround = true
+NaviHelper.drawRouteOnMinimap = true   -- breadcrumb the route on the small HUD minimap (bottom-left)
 -- Route line I3D: when available we use AutoDrive's drawing/line.i3d (our scene, so it is not cleared).
 NaviHelper.AUTODRIVE_MOD_NAME = "FS25_AutoDrive"
 NaviHelper.routeLineRootNode = nil
 NaviHelper.routeLineSegmentNodes = nil   -- table of cloned line nodes (max routeLineMaxSegments)
 NaviHelper.routeLineSharedI3D = nil     -- keep reference so shared I3D is not released
-NaviHelper.routeLineUseI3D = false      -- true when AutoDrive line.i3d was loaded successfully
+NaviHelper.routeLineUseI3D = false      -- true when our own line.i3d was loaded successfully
 
 local function log(fmt, ...)
     if Logging and Logging.info then
@@ -107,7 +113,7 @@ local function tr(key, fallback)
 end
 
 -- Stable key for per-vehicle storage (rootNode is entity id).
--- Defined here (before first use) so onClearTarget/onSetTargetAhead/ingameMapMouseEvent can call it.
+-- Defined here (before first use) so onClearTarget/onRouteToADDest/ingameMapMouseEvent can call it.
 local function vehicleKey(vehicle)
     if not vehicle or not vehicle.rootNode then return nil end
     return tostring(vehicle.rootNode)
@@ -135,13 +141,8 @@ function NaviHelper:loadMap(name)
         log("AutoDrive not found; using air-line fallback only.")
     end
 
-    -- Try to load AutoDrive's line.i3d for route line (our scene node, so it won't be cleared by their manager).
-    NaviHelper:tryLoadAutoDriveRouteLineI3D()
-
-    -- Load the pre-baked road graph for this map (if a processed-map file exists).
-    if RoadGraphFile and RoadGraphFile.load then pcall(RoadGraphFile.load) end
-    -- Reset the grey-terrain router cache for the new map.
-    if GreyRouter and GreyRouter.reset then pcall(GreyRouter.reset) end
+    -- Load our own line.i3d for the route line (our scene node under terrainRootNode).
+    NaviHelper:tryLoadRouteLineI3D()
 
     -- Hook the in-game map frame's click callback. It hands us WORLD coordinates
     -- directly (frame, element, worldX, worldZ) — robust, unlike a self-rolled
@@ -162,18 +163,19 @@ function NaviHelper:loadMap(name)
     -- Action events are registered by NaviHelperVehicle specialization (VEHICLE category).
 end
 
--- Load AutoDrive's drawing/line.i3d and create a segment pool for our route line (our scene, so nothing clears it).
-function NaviHelper:tryLoadAutoDriveRouteLineI3D()
-    if not g_modManager or not g_currentMission or not g_currentMission.terrainRootNode then return end
+-- Load our OWN drawing/line.i3d (depth-tested, colourable lineShader) and create a segment pool
+-- for the route line (our scene node under terrainRootNode, so nothing else clears it).
+function NaviHelper:tryLoadRouteLineI3D()
+    if not g_currentMission or not g_currentMission.terrainRootNode then return end
     if NaviHelper.routeLineRootNode then return end -- already loaded
 
-    local adMod = g_modManager:getModByName(NaviHelper.AUTODRIVE_MOD_NAME)
-    if not adMod or not adMod.directory then
-        log("AutoDrive mod not found; route line will use drawDebugLine.")
+    local dir = NaviHelper.modDirectory
+    if not dir or dir == "" then
+        log("mod directory unknown; route line will use drawDebugLine.")
         return
     end
 
-    local path = Utils.getFilename("drawing/line.i3d", adMod.directory)
+    local path = Utils.getFilename("drawing/line.i3d", dir)
     if not path or path == "" then return end
 
     local node, sharedI3D = nil, nil
@@ -181,7 +183,8 @@ function NaviHelper:tryLoadAutoDriveRouteLineI3D()
         node, sharedI3D = loadSharedI3DFile(path)
     end)
     if not ok or not node then
-        if err then log("Could not load AutoDrive line.i3d: %s", tostring(err)) end
+        log("route line.i3d load failed (ok=%s node=%s err=%s path=%s)",
+            tostring(ok), tostring(node ~= nil), tostring(err), tostring(path))
         return
     end
 
@@ -198,12 +201,18 @@ function NaviHelper:tryLoadAutoDriveRouteLineI3D()
     link(g_currentMission.terrainRootNode, root)
     NaviHelper.routeLineRootNode = root
 
-    -- Segment template: use root of line.i3d (usually one mesh child). Clone it N times.
+    -- Segment template: the FIRST CHILD of the i3d root is the line mesh. Cloning the root group
+    -- (with default args) yields nothing — mirror HoldToSteer's SegmentPool: getChildAt(node, 0)
+    -- and clone(template, true, false, false).
+    local template = node
+    pcall(function() local c = getChildAt(node, 0); if c and c ~= 0 then template = c end end)
+
     local numSegments = math.max(1, NaviHelper.routeLineMaxSegments or 20)
     local segments = {}
     for i = 1, numSegments do
-        local cloneNode = clone(node)
-        if cloneNode then
+        local cloneNode
+        pcall(function() cloneNode = clone(template, true, false, false) end)
+        if cloneNode and cloneNode ~= 0 then
             link(root, cloneNode)
             segments[i] = cloneNode
         end
@@ -212,7 +221,9 @@ function NaviHelper:tryLoadAutoDriveRouteLineI3D()
     NaviHelper.routeLineSegmentNodes = segments
     NaviHelper.routeLineUseI3D = (#segments > 0)
     if NaviHelper.routeLineUseI3D then
-        log("Using AutoDrive line.i3d for route line (%d segments).", #segments)
+        log("Using own line.i3d for route line (%d segments).", #segments)
+    else
+        log("route line.i3d loaded but produced 0 segments (template=%s)", tostring(template))
     end
 end
 
@@ -300,22 +311,53 @@ function NaviHelper:onMapSelectionMode()
     showIngameNotification(msg)
 end
 
-function NaviHelper:onSetTargetAhead(vehicle)
-    local v = vehicle or NaviHelper.drawVehicle or (g_currentMission and g_currentMission.controlledVehicle)
-    if v and v.components and v.components[1] and v.components[1].node then
-        local x, _, z = getWorldTranslation(v.components[1].node)
-        local heading = self:getVehicleHeadingY(v)
-        local dist = 80
-        local tx = x + math.sin(-heading) * dist
-        local tz = z + math.cos(-heading) * dist
-        local slot = self:routeSlot(v, true)
-        if slot then
-            slot.route = { { x = tx, z = tz } }   -- single destination
-            slot.pathNodes = nil
-        end
-        self:invalidateRouteCaches()
-        log("Target set ahead: %.1f, %.1f", tx, tz)
+-- Action (Alt+T / F12): TOGGLE navigation to the destination currently selected in AutoDrive.
+-- Lets you use AD's named-marker picker (Hof 49, F28, sell points, ...) instead of hunting on the
+-- map — but only when YOU press the key, so a stale AD destination never shows up on its own.
+-- Pressing again while a route is active switches navigation OFF (e.g. you cut into the field early
+-- and don't want the leftover arrow + distance hanging around).
+function NaviHelper:onRouteToADDest(vehicle)
+    local v = vehicle or NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
+        or (g_currentMission and g_currentMission.controlledVehicle)
+    if v == nil then return end
+
+    -- Toggle off: this vehicle already has an active route -> clear it and stop drawing.
+    local existing = self:routeSlot(v, false)
+    if NaviHelper.navAidOn and existing and existing.route and #existing.route > 0 then
+        self:onClearTarget(v)
+        NaviHelper.navAidOn = false
+        log("nav toggled OFF (Alt+T)")
+        return
     end
+
+    if NaviHelperAD == nil then return end
+
+    local x, z, name
+    if NaviHelperAD.getSelectedDestinationFromVehicle then
+        x, z, name = NaviHelperAD.getSelectedDestinationFromVehicle(v)
+    end
+    if (not x or not z) and NaviHelperAD.getCurrentDestinationFromVehicle then
+        x, z, name = NaviHelperAD.getCurrentDestinationFromVehicle(v)
+    end
+    if not x or not z then
+        if showIngameNotification then
+            showIngameNotification(tr("NAVIHELPER_MSG_NO_AD_DEST", "Kein AutoDrive-Ziel ausgewaehlt"))
+        end
+        log("route to AD dest: no destination selected")
+        return
+    end
+
+    local slot = self:routeSlot(v, true)
+    if slot then
+        slot.route = { { x = x, z = z } }
+        slot.pathNodes = nil
+        slot.destName = name
+        slot.currentPathIndex = 1
+    end
+    NaviHelper.navAidOn = true
+    NaviHelper.drawVehicle = v
+    self:invalidateRouteCaches()
+    log("route to AD dest '%s' at %.1f,%.1f", tostring(name), x, z)
 end
 
 function NaviHelper:deleteMap()
@@ -381,8 +423,10 @@ function NaviHelper.onMapClick(frame, element, worldX, worldZ)
     if NaviHelper._lastMapClickTime and (now - NaviHelper._lastMapClickTime) < 250 then return end
     NaviHelper._lastMapClickTime = now
 
-    local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
-        or (g_currentMission and g_currentMission.controlledVehicle)
+    -- Target the vehicle the player is CURRENTLY in (not whichever was used last). Prefer the
+    -- live controlledVehicle, then the tracked active vehicle; drawVehicle is only a last resort.
+    local v = (g_currentMission and g_currentMission.controlledVehicle)
+        or NaviHelper.lastActiveVehicle or NaviHelper.drawVehicle
     if v == nil then
         log("map click ignored: no active vehicle")
         return
@@ -449,6 +493,42 @@ local function isMenuMapPageActive()
     return false
 end
 
+-- Screen-space rect the menu-map dots must stay inside. The route overlay is NOT auto-clipped by
+-- the FS25 menu map, so without this the dots paint over the left filter panel / side HUD. Prefer
+-- the map element's reported bounds; when it reports a full-screen backing (xMin ~0), guard the
+-- left edge so dots don't bleed onto the panel. (Approach borrowed from WayPointGPS.)
+local function menuMapClipRect()
+    local xMin, yMin, xMax, yMax
+    local function absorb(element)
+        if element == nil or element.layout == nil then return end
+        local layout = element.layout
+        if layout.absPosition == nil or layout.absSize == nil then return end
+        local ax, ay = layout.absPosition[1], layout.absPosition[2]
+        local sx, sy = layout.absSize[1], layout.absSize[2]
+        if ax == nil or sx == nil or sx <= 0.05 or sy <= 0.05 then return end
+        local bx, by = ax + sx, ay + sy
+        if xMin == nil then
+            xMin, yMin, xMax, yMax = ax, ay, bx, by
+        else
+            xMin = math.max(xMin, ax); yMin = math.max(yMin, ay)
+            xMax = math.min(xMax, bx); yMax = math.min(yMax, by)
+        end
+    end
+    absorb(menuMapElement())
+    if g_inGameMenu ~= nil then
+        absorb(g_inGameMenu.pageMapOverview)
+        absorb(g_inGameMenu.pageMap)
+    end
+    if xMin == nil or xMax <= xMin or yMax <= yMin then
+        xMin, yMin, xMax, yMax = 0.30, 0.055, 0.995, 0.955
+    end
+    if xMin < 0.20 then xMin = 0.30 end   -- full-screen backing reported -> guard the left panel
+    if yMin < 0.03 then yMin = 0.055 end
+    if xMax > 0.995 then xMax = 0.995 end
+    if yMax > 0.965 then yMax = 0.965 end
+    return xMin, yMin, xMax, yMax
+end
+
 local function worldToMenuMapPos(wx, wz)
     local map = menuMapElement()
     if map == nil then return nil, nil end
@@ -460,17 +540,37 @@ local function worldToMenuMapPos(wx, wz)
     local mapZ = (wz + map.worldCenterOffsetZ) / map.worldSizeZ * 0.5 + 0.25
     if mapX < 0.25 or mapX > 0.75 or mapZ < 0.25 or mapZ > 0.75 then return nil, nil end
     local ok, sx, sy = pcall(layout.getMapObjectPosition, layout, mapX, mapZ, 0, 0, 0, true)
-    if ok and sx ~= nil then return sx, sy end
-    return nil, nil
+    if not ok or sx == nil then return nil, nil end
+    -- Clip to the visible map area so dots don't draw over the panel / HUD.
+    local x0, y0, x1, y1 = menuMapClipRect()
+    if sx < x0 or sx > x1 or sy < y0 or sy > y1 then return nil, nil end
+    return sx, sy
+end
+
+-- World -> screen position on the small HUD minimap (bottom-left). Same projection as the menu
+-- map, but on g_currentMission.hud.ingameMap. (Pattern borrowed from WayPointGPS.)
+local function worldToMinimapPos(wx, wz)
+    local hud = g_currentMission and g_currentMission.hud
+    local ingameMap = hud and (hud.ingameMap or (type(hud.getIngameMap) == "function" and hud:getIngameMap()))
+    if ingameMap == nil or ingameMap.layout == nil then return nil, nil end
+    if ingameMap.worldCenterOffsetX == nil or ingameMap.worldSizeX == nil
+        or ingameMap.worldCenterOffsetZ == nil or ingameMap.worldSizeZ == nil then return nil, nil end
+    local mapX = (wx + ingameMap.worldCenterOffsetX) / ingameMap.worldSizeX * 0.5 + 0.25
+    local mapZ = (wz + ingameMap.worldCenterOffsetZ) / ingameMap.worldSizeZ * 0.5 + 0.25
+    if mapX < 0.25 or mapX > 0.75 or mapZ < 0.25 or mapZ > 0.75 then return nil, nil end
+    local ok, sx, sy = pcall(ingameMap.layout.getMapObjectPosition, ingameMap.layout, mapX, mapZ, 0, 0, 0, true)
+    if not ok or sx == nil then return nil, nil end
+    return sx, sy
 end
 
 -- Draw a dotted breadcrumb along a whole screen-space polyline. Arc-length stepping
 -- drops a dot every `spacing` regardless of node density, so it works both for a dense
 -- AD road path (many close nodes) and a sparse straight fallback (few far points).
-local function drawPolylineBreadcrumb(overlayId, pts, aspect)
+-- dotW/spacingIn let the small minimap use finer dots than the full ESC map.
+local function drawPolylineBreadcrumb(overlayId, pts, aspect, dotW, spacingIn)
     if pts == nil or #pts == 0 then return end
-    local spacing = 0.009
-    local w = 0.0045
+    local spacing = spacingIn or 0.009
+    local w = dotW or 0.0045
     local h = w * aspect
     setOverlayColor(overlayId, 0.27, 0.77, 0.37, 0.7)
     local function dot(x, y) renderOverlay(overlayId, x - w * 0.5, y - h * 0.5, w, h) end
@@ -493,263 +593,25 @@ local function drawPolylineBreadcrumb(overlayId, pts, aspect)
     end
 end
 
--- Throttled diagnostic: log at most a few times so we can see why dots don't show
--- without spamming (drawMenuMap runs every frame).
-local function mapDiag(fmt, ...)
-    NaviHelper._mapDiagCount = (NaviHelper._mapDiagCount or 0)
-    if NaviHelper._mapDiagCount >= 8 then return end
-    NaviHelper._mapDiagCount = NaviHelper._mapDiagCount + 1
-    log("drawMenuMap diag: " .. fmt, ...)
-end
-
--- R1 debug overlay: project every RoadGraph node onto the open map. Normal nodes
--- small cyan, junctions (degree>=3) larger amber. Nodes only — the road lines are
--- implied by node density; this is enough to verify coverage + junction welding.
-function NaviHelper._drawRoadGraph(aspect)
-    local id = NaviHelper.dotOverlayId
-    local nodes, adj = RoadGraph.nodes, RoadGraph.adj
-    local w = 0.0035
-    local h = w * aspect
-    local jw = 0.007
-    local jh = jw * aspect
-    for i = 1, #nodes do
-        local nd = nodes[i]
-        local sx, sy = worldToMenuMapPos(nd.x, nd.z)
-        if sx ~= nil then
-            local deg = (adj[i] ~= nil) and #adj[i] or 0
-            if deg >= 3 then
-                setOverlayColor(id, 1.0, 0.62, 0.0, 0.95)
-                renderOverlay(id, sx - jw * 0.5, sy - jh * 0.5, jw, jh)
-            else
-                setOverlayColor(id, 0.20, 0.75, 0.95, 0.8)
-                renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h)
-            end
-        end
-    end
-    setOverlayColor(id, 1, 1, 1, 1)
-end
-
--- ---- G1: drivability heatmap (verify the getIsPositionReachable oracle) ----------
-NaviHelper.reachMapOn = false
-NaviHelper.reachCells = nil   -- cached list of reachable {x,z} world points
-
-local function terrainHeight(x, z)
-    local m = g_currentMission
-    if getTerrainHeightAtWorldPos ~= nil and m ~= nil and m.terrainRootNode ~= nil then
-        local ok, h = pcall(getTerrainHeightAtWorldPos, m.terrainRootNode, x, 0, z)
-        if ok and h ~= nil then return h end
-    end
-    return 0
-end
-
--- Drivability oracle: AISystem:getIsPositionReachable(x, y, z) (cheap; ~0.0004 ms).
-function NaviHelper.isReachable(x, z)
-    local ai = g_currentMission and g_currentMission.aiSystem
-    if ai == nil or ai.getIsPositionReachable == nil then return false end
-    local ok, val = pcall(ai.getIsPositionReachable, ai, x, terrainHeight(x, z), z)
-    return ok and (val == true or (type(val) == "number" and val ~= 0))
-end
-
--- Sample the whole map once. Store EVERY cell with its reachable flag so the overlay
--- can show green (reachable) vs red (not) — to judge how well the oracle discriminates.
-function NaviHelper.buildReachMap(spacing)
-    spacing = spacing or 24
-    local m = g_currentMission
-    local ts = (m and m.terrainSize) or 2048
-    local half = ts / 2
-    local cells, total, reach = {}, 0, 0
-    local x = -half
-    while x <= half do
-        local z = -half
-        while z <= half do
-            total = total + 1
-            local ok = NaviHelper.isReachable(x, z)
-            if ok then reach = reach + 1 end
-            cells[#cells + 1] = { x, z, ok }
-            z = z + spacing
-        end
-        x = x + spacing
-    end
-    NaviHelper.reachCells = cells
-    log("reach heatmap: %d/%d reachable (%.0f%%) @ %.0fm spacing", reach, total,
-        (total > 0 and reach / total * 100 or 0), spacing)
-end
-
-function NaviHelper._drawReachMap(aspect)
-    local cells = NaviHelper.reachCells
-    if cells == nil then return end
-    local id = NaviHelper.dotOverlayId
-    local w = 0.004
-    local h = w * aspect
-    for i = 1, #cells do
-        local c = cells[i]
-        local sx, sy = worldToMenuMapPos(c[1], c[2])
-        if sx ~= nil then
-            if c[3] then
-                setOverlayColor(id, 0.27, 0.77, 0.37, 0.5)   -- reachable = green
-            else
-                setOverlayColor(id, 0.95, 0.20, 0.20, 0.9)   -- not reachable = red
-            end
-            renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h)
-        end
-    end
-    setOverlayColor(id, 1, 1, 1, 1)
-end
-
-function NaviHelper:consoleReachMap()
-    NaviHelper.reachMapOn = not NaviHelper.reachMapOn
-    if NaviHelper.reachMapOn and NaviHelper.reachCells == nil then
-        NaviHelper.buildReachMap(24)
-    end
-    return "reach heatmap " .. (NaviHelper.reachMapOn and "AN" or "aus")
-        .. (NaviHelper.reachCells and (" (" .. #NaviHelper.reachCells .. " Punkte)") or "")
-end
-
-if addConsoleCommand ~= nil then
-    addConsoleCommand("nhReachMap", "NaviHelper G1: Befahrbarkeits-Heatmap an/aus", "consoleReachMap", NaviHelper)
-end
-
--- ---- Debug: draw the cells GreyRouter considers DRIVABLE (verify road/track vs grass) ----
-NaviHelper.greyMapOn = false
-NaviHelper.greyCells = nil
-
-function NaviHelper.buildGreyMap(step)
-    step = step or 8
-    if GreyRouter == nil or GreyRouter.cellGrey == nil then return end
-    local m = g_currentMission
-    local ts = (m and m.terrainSize) or 2048
-    local half = ts / 2
-    local cs = GreyRouter.cell
-    local cells = {}
-    local x = -half
-    while x <= half do
-        local z = -half
-        while z <= half do
-            if GreyRouter.cellGrey(math.floor(x / cs), math.floor(z / cs)) then
-                cells[#cells + 1] = { x, z }
-            end
-            z = z + step
-        end
-        x = x + step
-    end
-    NaviHelper.greyCells = cells
-    log("grey map: %d befahrbare Zellen @ %dm", #cells, step)
-end
-
-function NaviHelper._drawGreyMap(aspect)
-    local cells = NaviHelper.greyCells
-    if cells == nil then return end
-    local id = NaviHelper.dotOverlayId
-    local w = 0.0042
-    local h = w * aspect
-    setOverlayColor(id, 0.20, 0.75, 0.95, 0.6)
-    for i = 1, #cells do
-        local sx, sy = worldToMenuMapPos(cells[i][1], cells[i][2])
-        if sx ~= nil then renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h) end
-    end
-    setOverlayColor(id, 1, 1, 1, 1)
-end
-
-function NaviHelper:consoleGreyMap()
-    NaviHelper.greyMapOn = not NaviHelper.greyMapOn
-    if NaviHelper.greyMapOn and NaviHelper.greyCells == nil then NaviHelper.buildGreyMap(8) end
-    return "grey/befahrbar-Overlay " .. (NaviHelper.greyMapOn and "AN" or "aus")
-        .. (NaviHelper.greyCells and (" (" .. #NaviHelper.greyCells .. " Zellen)") or "")
-end
-
-if addConsoleCommand ~= nil then
-    addConsoleCommand("nhGrey", "NaviHelper: befahrbare Zellen (GreyRouter) auf Karte zeichnen", "consoleGreyMap", NaviHelper)
-end
-
--- ---- POC-H: draw the loaded pre-baked road graph on the map (orientation check) ----
-NaviHelper.roadFileOn = false
-
-function NaviHelper._drawRoadFile(aspect)
-    if RoadGraphFile == nil or not RoadGraphFile.ready or RoadGraphFile.edges == nil then return end
-    local id = NaviHelper.dotOverlayId
-    local w = 0.0035
-    local h = w * aspect
-    setOverlayColor(id, 0.20, 0.75, 0.95, 0.8)
-    for k = 1, #RoadGraphFile.edges do
-        local pts = RoadGraphFile.edges[k].pts
-        for i = 1, #pts, 2 do
-            local sx, sy = worldToMenuMapPos(pts[i], pts[i + 1])
-            if sx ~= nil then renderOverlay(id, sx - w * 0.5, sy - h * 0.5, w, h) end
-        end
-    end
-
-    setOverlayColor(id, 1, 1, 1, 1)
-end
-
-function NaviHelper:consoleRoadFile()
-    NaviHelper.roadFileOn = not NaviHelper.roadFileOn
-    local n = (RoadGraphFile and RoadGraphFile.nodes) and #RoadGraphFile.nodes or 0
-    return "road graph overlay " .. (NaviHelper.roadFileOn and "AN" or "aus")
-        .. " (map=" .. tostring(RoadGraphFile and RoadGraphFile.mapKey) .. ", " .. n .. " Knoten)"
-end
-
-if addConsoleCommand ~= nil then
-    addConsoleCommand("nhRoadFile", "NaviHelper POC-H: geladenen Straßengraph auf Karte zeichnen", "consoleRoadFile", NaviHelper)
-end
-
--- Log the map's world<->image projection params (needed to re-export the road graph
--- with the correct overview-pixel->world mapping). Open the map first.
-function NaviHelper:consoleMapInfo()
-    local map = menuMapElement()
-    local m = g_currentMission
-    if map == nil then return "Karte zuerst oeffnen (ESC-Map), dann nhMapInfo" end
-    local s = string.format("MAPINFO offsetX=%s offsetZ=%s sizeX=%s sizeZ=%s terrain=%s title=%s",
-        tostring(map.worldCenterOffsetX), tostring(map.worldCenterOffsetZ),
-        tostring(map.worldSizeX), tostring(map.worldSizeZ),
-        tostring(m and m.terrainSize),
-        tostring((m and m.missionInfo and m.missionInfo.mapTitle) or (m and m.mapTitle)))
-    log("%s", s)
-    return s
-end
-
-if addConsoleCommand ~= nil then
-    addConsoleCommand("nhMapInfo", "NaviHelper: Karten-Projektionsparameter loggen", "consoleMapInfo", NaviHelper)
-end
-
 -- Appended to InGameMenu.draw: draw the route points as dots on the open map.
 -- Destination (last point) green, intermediate waypoints orange. pcall-wrapped so
 -- a draw error can never take down the whole in-game menu.
 function NaviHelper.drawMenuMap()
     local ok, err = pcall(NaviHelper._drawMenuMapInner)
-    if not ok then mapDiag("ERROR %s", tostring(err)) end
+    if not ok then logError("drawMenuMap: %s", tostring(err)) end
 end
 
 function NaviHelper._drawMenuMapInner()
     if g_inGameMenu == nil or not g_inGameMenu.isOpen then return end
     if not isMenuMapPageActive() then return end  -- only on the map page, not calendar/prices/etc.
 
-    -- Overlay (lazy create). Shared by the route dots and the R1 graph debug overlay.
+    -- Overlay (lazy create) for the route dots.
     if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
         NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
     end
     if NaviHelper.dotOverlayId == nil then return end
 
     local aspect = g_screenAspectRatio or (16 / 9)
-
-    -- R1 debug overlay: draw the whole RoadGraph (toggle with console command "nhGraph").
-    if RoadGraph ~= nil and RoadGraph.debugDraw and RoadGraph.ready and RoadGraph.nodes ~= nil then
-        NaviHelper._drawRoadGraph(aspect)
-    end
-
-    -- G1 debug overlay: drivability heatmap (toggle with console command "nhReachMap").
-    if NaviHelper.reachMapOn and NaviHelper.reachCells ~= nil then
-        NaviHelper._drawReachMap(aspect)
-    end
-
-    -- POC-H overlay: pre-baked road graph (toggle with console command "nhRoadFile").
-    if NaviHelper.roadFileOn then
-        NaviHelper._drawRoadFile(aspect)
-    end
-
-    -- Debug overlay: GreyRouter drivable cells (toggle with console command "nhGrey").
-    if NaviHelper.greyMapOn and NaviHelper.greyCells ~= nil then
-        NaviHelper._drawGreyMap(aspect)
-    end
 
     local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
         or (g_currentMission and g_currentMission.controlledVehicle)
@@ -802,8 +664,6 @@ function NaviHelper._drawMenuMapInner()
         end
     end
     setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, 1)
-    mapDiag("rendered %d/%d points (first world=%.1f,%.1f)", converted, n,
-        slot.route[1].x, slot.route[1].z)
 end
 
 -- Mac: Option+M often sends unicode 0xB5 (µ) instead of KEY_M+modifier, so action binding never fires
@@ -851,7 +711,7 @@ function NaviHelper:keyEvent(unicode, sym, modifier, isDown)
         return
     end
     if alt and sym == Input.KEY_T then
-        NaviHelper:onSetTargetAhead()
+        NaviHelper:onRouteToADDest()
         return
     end
 
@@ -860,7 +720,7 @@ function NaviHelper:keyEvent(unicode, sym, modifier, isDown)
     if f9 and sym == f9 then NaviHelper:onMapSelectionMode(); return end
     if f10 and sym == f10 then NaviHelper:onToggleUI(); return end
     if f11 and sym == f11 then NaviHelper:onClearTarget(); return end
-    if f12 and sym == f12 then NaviHelper:onSetTargetAhead(); return end
+    if f12 and sym == f12 then NaviHelper:onRouteToADDest(); return end
 end
 
 function NaviHelper:getVehiclePosition(vehicle)
@@ -889,142 +749,135 @@ function NaviHelper:getVehicleHeadingY(vehicle)
     return 0
 end
 
--- Find next turn in path: returns distance (m), direction ("links", "rechts", "geradeaus"), or nil if no significant turn.
+-- Window length (m) each side used to measure the heading change at a path node, and the minimum
+-- heading change that counts as a maneuver. Shared by the route-turn precompute below.
+local TURN_WINDOW = 11.0
+local TURN_ANGLE_MIN = math.rad(28)
+
+-- Unit direction of the path ~TURN_WINDOW metres AHEAD of node i. On dense AD paths (nodes every
+-- few metres) a 90 deg junction is spread over many nodes with tiny per-node angles; measuring over
+-- a window catches it while ignoring gentle long road bends (they change heading too gradually).
+local function pathDirAhead(path, i)
+    local ax, az = path[i].x, path[i].z
+    local acc = 0
+    for j = i, #path - 1 do
+        local p2 = path[j + 1]
+        acc = acc + MathUtil.vector2Length(p2.x - path[j].x, p2.z - path[j].z)
+        if acc >= TURN_WINDOW then
+            local dx, dz = p2.x - ax, p2.z - az
+            local l = math.sqrt(dx * dx + dz * dz)
+            if l > 0.5 then return dx / l, dz / l end
+            return nil
+        end
+    end
+    return nil
+end
+-- Unit direction of the path ~TURN_WINDOW metres BEHIND node i (still pointing forward).
+local function pathDirBack(path, i)
+    local ax, az = path[i].x, path[i].z
+    local acc = 0
+    for j = i, 2, -1 do
+        local p1 = path[j - 1]
+        acc = acc + MathUtil.vector2Length(path[j].x - p1.x, path[j].z - p1.z)
+        if acc >= TURN_WINDOW then
+            local dx, dz = ax - p1.x, az - p1.z
+            local l = math.sqrt(dx * dx + dz * dz)
+            if l > 0.5 then return dx / l, dz / l end
+            return nil
+        end
+    end
+    return nil
+end
+
+-- Precompute the maneuver plan for a route ONCE, at build time (not per frame): a deduped, ordered
+-- list of significant turns plus the cumulative arc length per node. Computing it per frame made the
+-- arrow flicker between candidate turns at threshold boundaries; with a fixed plan, each frame only
+-- has to pick the next turn ahead, which is stable.
+-- Returns: turns = { {idx=<peak node>, dir="links"/"rechts", angle=<rad>}, ... }, cumArc = {per node}.
+local function computeRouteTurns(path)
+    local turns, cumArc = {}, {}
+    if not path or #path < 3 then return turns, cumArc end
+    cumArc[1] = 0
+    for i = 2, #path do
+        cumArc[i] = cumArc[i - 1]
+            + MathUtil.vector2Length(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z)
+    end
+    local i = 2
+    while i <= #path - 1 do
+        local bx, bz = pathDirBack(path, i)
+        local fx, fz = pathDirAhead(path, i)
+        if bx and fx then
+            local angle = math.acos(math.max(-1, math.min(1, bx * fx + bz * fz)))
+            if angle > TURN_ANGLE_MIN then
+                -- Walk through the maneuver region tracking the peak heading change, so a turn spread
+                -- over many dense nodes is recorded once, at its sharpest point (slight vs sharp).
+                local maxA, maxCross, peakIdx = angle, (bx * fz - bz * fx), i
+                local k = i
+                while k < #path - 1 do
+                    k = k + 1
+                    local kbx, kbz = pathDirBack(path, k)
+                    local kfx, kfz = pathDirAhead(path, k)
+                    if not (kbx and kfx) then break end
+                    local ka = math.acos(math.max(-1, math.min(1, kbx * kfx + kbz * kfz)))
+                    if ka < TURN_ANGLE_MIN * 0.6 then break end
+                    if ka > maxA then maxA = ka; maxCross = kbx * kfz - kbz * kfx; peakIdx = k end
+                end
+                local dir = (maxCross > 0) and tr("NAVIHELPER_DIR_RIGHT", "rechts")
+                    or tr("NAVIHELPER_DIR_LEFT", "links")
+                turns[#turns + 1] = { idx = peakIdx, dir = dir, angle = maxA }
+                i = k + 1  -- skip past this maneuver region so it is not counted twice
+            else
+                i = i + 1
+            end
+        else
+            i = i + 1
+        end
+    end
+    return turns, cumArc
+end
+
+-- Find the next maneuver AHEAD of the vehicle from the precomputed route plan (slot.turns/cumArc).
+-- Returns: distance (m), direction, angle (rad) — or nil if no turn within the warning range.
+-- Progress is tracked monotonically (slot.turnProgressIdx mostly advances) so that where the route
+-- passes near itself the closest-node lookup cannot jump backward and flip the reported turn.
 function NaviHelper:findNextTurn(path, pathIdx, vehicle)
+    local slot = self:routeSlot(vehicle, false)
+    if not slot or not slot.turns or not slot.cumArc then return nil, nil end
     if not path or #path < 3 then return nil, nil end
     local vx, _, vz = self:getVehiclePosition(vehicle)
     if not vx or not vz then return nil, nil end
-    
-    -- Get vehicle heading to determine which nodes are "ahead".
-    local headingY = self:getVehicleHeadingY(vehicle)
-    local headingX = math.sin(headingY)
-    local headingZ = math.cos(headingY)
-    
-    -- Find the path node that is ahead of the vehicle (not behind).
-    -- We look for the node where the vector from vehicle to node is in the forward direction.
-    local startIdx = 1
-    local bestForwardDist = -math.huge
-    
-    -- Use pathIdx as starting point if provided, otherwise start from beginning.
-    local searchStart = pathIdx or 1
-    for i = searchStart, math.min(#path, searchStart + 30) do  -- reduced from 50 to 30 for larger maps
+
+    -- Advance progress to the path node closest to the vehicle, searching a forward window from the
+    -- last progress index (small backward allowance covers a fresh route or brief reversing).
+    local n = #path
+    local pi = slot.turnProgressIdx or 1
+    if pi < 1 then pi = 1 elseif pi > n then pi = n end
+    local lo = math.max(1, pi - 4)
+    local hi = math.min(n, pi + 80)
+    local bestI, bestD2 = pi, math.huge
+    for i = lo, hi do
         local node = path[i]
         if node and node.x and node.z then
-            -- Vector from vehicle to node.
-            local dx = node.x - vx
-            local dz = node.z - vz
-            local distSq = dx * dx + dz * dz
-            
-            -- Dot product with heading: positive = ahead, negative = behind.
-            local forwardComponent = dx * headingX + dz * headingZ
-            
-            -- Prefer nodes that are ahead (forwardComponent > 0) and not too far.
-            -- If multiple nodes are ahead, prefer the closest one.
-            if forwardComponent > -5.0 then  -- allow small tolerance for nodes slightly behind
-                -- Score: prioritize forward direction, then distance.
-                local score = forwardComponent - math.sqrt(distSq) * 0.1
-                if score > bestForwardDist then
-                    bestForwardDist = score
-                    startIdx = i
-                end
-            end
+            local dx, dz = node.x - vx, node.z - vz
+            local d2 = dx * dx + dz * dz
+            if d2 < bestD2 then bestD2 = d2; bestI = i end
         end
     end
-    
-    -- Ensure we're not going backwards: if we found a node behind us, use pathIdx or start from 1.
-    if startIdx < (pathIdx or 1) then
-        startIdx = pathIdx or 1
-    end
-    
-    -- Only announce "Abbiegen" for real turns (e.g. intersections), not road curves or path noise.
-    -- Sharp turns (e.g. > 45°) are always announced (Y-junction, intersection). Medium angles use "sustained curve" filter.
-    local minTurnAngle = math.rad(25)
-    local minSegmentLen = 3
-    local sharpTurnAngle = math.rad(45)   -- above this always announce (real junction); below use sustained-curve filter
-    local minSegmentLenSharp = 1         -- at junctions waypoints can be close; require only 1m for sharp turns
-    local curveAngleThreshold = math.rad(15)
-    local lookAhead = 25
+    slot.turnProgressIdx = bestI
 
-    for i = startIdx, math.min(startIdx + lookAhead, #path - 2) do
-        local a = path[i]
-        local b = path[i + 1]
-        local c = path[i + 2]
-        if a and b and c and a.x and a.z and b.x and b.z and c.x and c.z then
-            local dx1, dz1 = b.x - a.x, b.z - a.z
-            local dx2, dz2 = c.x - b.x, c.z - b.z
-            local len1 = math.sqrt(dx1 * dx1 + dz1 * dz1)
-            local len2 = math.sqrt(dx2 * dx2 + dz2 * dz2)
-            if len1 < minSegmentLenSharp or len2 < minSegmentLenSharp then
-                -- skip degenerate segments
+    -- Distance from the closest node to each turn node along the route. Within ~one node spacing of
+    -- the true distance-to-turn, and it counts DOWN monotonically as the vehicle advances.
+    local vehicleArc = slot.cumArc[bestI] or 0
+    local cap = NaviHelper.turnWarnRange or 300
+    for _, t in ipairs(slot.turns) do
+        if t.idx > bestI then
+            local d = (slot.cumArc[t.idx] or 0) - vehicleArc
+            if d <= 0 then
+                return 0, t.dir, t.angle
+            elseif d <= cap then
+                return d, t.dir, t.angle
             else
-                dx1, dz1 = dx1 / len1, dz1 / len1
-                dx2, dz2 = dx2 / len2, dz2 / len2
-                local dot = math.max(-1, math.min(1, dx1 * dx2 + dz1 * dz2))
-                local angle = math.acos(dot)
-                local crossZ = dx1 * dz2 - dz1 * dx2
-                local lenOk = len1 >= minSegmentLen and len2 >= minSegmentLen
-                if not lenOk then lenOk = (angle > sharpTurnAngle) end
-
-                if lenOk and angle > minTurnAngle then
-                    local isSharp = (angle > sharpTurnAngle)
-                    -- Sharp turn (e.g. Y-junction): always announce. Otherwise check sustained curve (road bend).
-                    local isSustainedCurve = false
-                    if not isSharp and i + 3 <= #path then
-                        local d = path[i + 3]
-                        if d and d.x and d.z then
-                            local dx3 = d.x - c.x
-                            local dz3 = d.z - c.z
-                            local len3 = math.sqrt(dx3 * dx3 + dz3 * dz3)
-                            if len3 >= minSegmentLen then
-                                dx3, dz3 = dx3 / len3, dz3 / len3
-                                local dot2 = dx2 * dx3 + dz2 * dz3
-                                dot2 = math.max(-1, math.min(1, dot2))
-                                local angle2 = math.acos(dot2)
-                                local crossZ2 = dx2 * dz3 - dz2 * dx3
-                                if angle2 > curveAngleThreshold and (crossZ2 * crossZ > 0) then
-                                    isSustainedCurve = true
-                                end
-                            end
-                        end
-                    end
-
-                    if not isSustainedCurve then
-                        local direction = (crossZ > 0) and tr("NAVIHELPER_DIR_RIGHT", "rechts") or tr("NAVIHELPER_DIR_LEFT", "links")
-                        local turnPoint = b
-                    if turnPoint and turnPoint.x and turnPoint.z then
-                        -- Check if turn point is ahead of us (not behind).
-                        local dx = turnPoint.x - vx
-                        local dz = turnPoint.z - vz
-                        local forwardComponent = dx * headingX + dz * headingZ
-                        
-                        if forwardComponent > -2.0 then  -- turn must be ahead (or very close)
-                            -- Calculate driving distance: distance from vehicle to startIdx node + sum of segments to turn point.
-                            local distToTurn = 0
-                            
-                            -- Distance from vehicle to startIdx node (first segment).
-                            local startNode = path[startIdx]
-                            if startNode and startNode.x and startNode.z then
-                                distToTurn = distToTurn + MathUtil.vector2Length(startNode.x - vx, startNode.z - vz)
-                            end
-                            
-                            -- Sum segments from startIdx to turn point (b).
-                            for j = startIdx, i do
-                                if j < #path then
-                                    local p1 = path[j]
-                                    local p2 = path[j + 1]
-                                    if p1 and p2 and p1.x and p1.z and p2.x and p2.z then
-                                        distToTurn = distToTurn + MathUtil.vector2Length(p2.x - p1.x, p2.z - p1.z)
-                                    end
-                                end
-                            end
-                            
-                            if distToTurn < 5000 then
-                                return distToTurn, direction
-                            end
-                        end
-                    end
-                    end
-                end
+                return nil, nil  -- next turn is still farther than the warning range -> straight
             end
         end
     end
@@ -1064,79 +917,14 @@ function NaviHelper:getEffectiveTarget(vehicle)
     vehicle = vehicle or (g_currentMission and g_currentMission.controlledVehicle)
     if vehicle == nil then return nil, nil, nil, nil, nil end
 
-    -- Priority 1: a manual map route always wins when set (this reverses the old
-    -- behaviour where AutoDrive was checked first). route[#route] is the destination.
-    do
-        local mkey = vehicleKey(vehicle)
-        local slot = mkey and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[mkey]
-        if slot and slot.route and #slot.route > 0 then
-            local dest = slot.route[#slot.route]
-            return dest.x, dest.z, slot.pathNodes, slot.currentPathIndex or 1, nil
-        end
-    end
-
-    -- Priority 2: AutoDrive destination (fallback when no manual route is set).
-    if NaviHelperAD then
-        local x, z, name
-        -- Prefer selected destination (firstMarker from UI) so "Hof 1" etc. is used before route is started.
-        if NaviHelperAD.getSelectedDestinationFromVehicle then
-            x, z, name = NaviHelperAD.getSelectedDestinationFromVehicle(vehicle)
-        end
-        if (not x or not z) and NaviHelperAD.getCurrentDestinationFromVehicle then
-            x, z, name = NaviHelperAD.getCurrentDestinationFromVehicle(vehicle)
-        end
-        if x and z then
-            local currentTime = g_currentMission and g_currentMission.time or 0
-            local vx, _, vz = self:getVehiclePosition(vehicle)
-
-            -- If AutoDrive is actively driving, use its current path.
-            local wayPoints, idx
-            if NaviHelperAD.getCurrentPathFromVehicle then
-                wayPoints, idx = NaviHelperAD.getCurrentPathFromVehicle(vehicle)
-            end
-            if wayPoints and idx and type(idx) == "number" then
-                local path = {}
-                for i = idx, #wayPoints do
-                    local wp = wayPoints[i]
-                    if wp and wp.x and wp.z then path[#path + 1] = { x = wp.x, y = wp.y or 0, z = wp.z } end
-                end
-                if #path > 0 then
-                    NaviHelper.lastValidPath = path
-                    NaviHelper.lastValidPathTime = currentTime
-                    NaviHelper.lastValidDestName = name
-                    NaviHelper.lastValidTargetX = x
-                    NaviHelper.lastValidTargetZ = z
-                    return x, z, path, idx, name
-                end
-            end
-
-            -- No current path (e.g. left route). Like real navi: keep showing last route for a while unless we're far off.
-            local graceMs = NaviHelper.stickyPathGracePeriodMs or 45000
-            local maxDist = NaviHelper.stickyPathMaxDistance or 120
-            local sameTarget = NaviHelper.lastValidTargetX and NaviHelper.lastValidTargetZ
-                and math.abs(x - NaviHelper.lastValidTargetX) < 1 and math.abs(z - NaviHelper.lastValidTargetZ) < 1
-            if sameTarget and NaviHelper.lastValidPath and #NaviHelper.lastValidPath > 1
-                and (currentTime - NaviHelper.lastValidPathTime) < graceMs and vx and vz then
-                local distToPath = distanceFromPointToPath(vx, vz, NaviHelper.lastValidPath)
-                if distToPath < maxDist then
-                    return x, z, NaviHelper.lastValidPath, 1, name
-                end
-            end
-
-            -- Grace expired or too far off: compute new route from current position.
-            if vx and vz and NaviHelperAD.getPathFromToWorld then
-                local computedPath = NaviHelperAD.getPathFromToWorld(vx, vz, x, z)
-                if computedPath and #computedPath > 0 then
-                    NaviHelper.lastValidPath = computedPath
-                    NaviHelper.lastValidPathTime = currentTime
-                    NaviHelper.lastValidDestName = name
-                    NaviHelper.lastValidTargetX = x
-                    NaviHelper.lastValidTargetZ = z
-                    return x, z, computedPath, 1, name
-                end
-            end
-            return x, z, nil, nil, name
-        end
+    -- Only a manual route is shown: set via map click, or via the "route to AutoDrive
+    -- destination" key (which stores the marker name in slot.destName). We deliberately do NOT
+    -- auto-display whatever destination AutoDrive happens to have selected (that was noisy).
+    local mkey = vehicleKey(vehicle)
+    local slot = mkey and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[mkey]
+    if slot and slot.route and #slot.route > 0 then
+        local dest = slot.route[#slot.route]
+        return dest.x, dest.z, slot.pathNodes, slot.currentPathIndex or 1, slot.destName
     end
     return nil, nil, nil, nil, nil
 end
@@ -1152,7 +940,7 @@ function NaviHelper:buildRoutePath(route, vx, vz, hdx, hdz)
     for i = 1, #route do seq[#seq + 1] = { x = route[i].x, z = route[i].z } end
 
     local nodes = {}
-    local greyRouted, roadRouted, adRouted, straightSegs = 0, 0, 0, 0
+    local adRouted, straightSegs = 0, 0
     local function push(p)
         local last = nodes[#nodes]
         if last and math.abs(last.x - p.x) < 0.5 and math.abs(last.z - p.z) < 0.5 then return end
@@ -1162,52 +950,26 @@ function NaviHelper:buildRoutePath(route, vx, vz, hdx, hdz)
     for i = 1, #seq - 1 do
         local a, b = seq[i], seq[i + 1]
         local seg
-        -- Priority 1: AutoDrive network. This is the map's real, human-built (or AD-generated)
-        -- road graph — the same data WayPointGPS ships pre-baked. It follows actual roads AND
-        -- field tracks wherever the network covers them, which terrain sampling provably cannot.
-        -- When an AD network exists for the map, it is by far the best source, so it wins first.
+        -- Route over the AutoDrive network (the map's real, human-built / AD-generated road graph).
+        -- The vehicle heading on the FIRST segment makes AD start ahead of the vehicle (no U-turn).
         if NaviHelperAD and NaviHelperAD.getPathFromToWorld then
-            -- Pass the vehicle heading on the FIRST segment so AD picks a start node ahead of
-            -- the vehicle instead of demanding a U-turn (GreyRouter's start-turn penalty is
-            -- bypassed when AD routes).
             local shx, shz
             if i == 1 then shx, shz = hdx, hdz end
             local ok, path = pcall(NaviHelperAD.getPathFromToWorld, a.x, a.z, b.x, b.z, shx, shz)
             if ok and path and #path > 0 then seg = path; adRouted = adRouted + 1 end
         end
-        -- Priority 2: pre-baked road graph (processed map via image extraction), if present.
-        if seg == nil and RoadGraphFile and RoadGraphFile.ready and RoadGraphFile.findPath then
-            local ok, path = pcall(RoadGraphFile.findPath, a.x, a.z, b.x, b.z)
-            if ok and path and #path > 0 then seg = path; roadRouted = roadRouted + 1 end
-        end
-        -- Priority 3: grey-terrain grid router — best-effort fallback on maps WITHOUT an AD
-        -- network. Follows asphalt/main roads reasonably, but cannot separate texture-only field
-        -- tracks from meadow (provably unsolvable), so it ranks below the real graph sources.
-        -- Pass the vehicle heading on the FIRST segment so the route won't open with a U-turn.
-        if seg == nil and GreyRouter and GreyRouter.findPath then
-            local sdx, sdz
-            if i == 1 then sdx, sdz = hdx, hdz end
-            local ok, path = pcall(GreyRouter.findPath, a.x, a.z, b.x, b.z, sdx, sdz)
-            if ok and path and #path > 0 then seg = path; greyRouted = greyRouted + 1 end
-        end
         if seg then
             for _, wp in ipairs(seg) do push({ x = wp.x, y = wp.y or 0, z = wp.z }) end
         else
+            -- No AD path (no network, or AD found none): honest straight line for this segment.
             push({ x = a.x, y = 0, z = a.z })
             push({ x = b.x, y = 0, z = b.z })
             straightSegs = straightSegs + 1
         end
     end
 
-    log("Route built: %d nodes from %d segment(s) — %d grey-grid, %d road-graph, %d AD, %d straight",
-        #nodes, #seq - 1, greyRouted, roadRouted, adRouted, straightSegs)
-    -- Dump the route geometry every rebuild (buildRoutePath only runs on a real change,
-    -- not per frame) so we can plot the ACTUAL route the player drove against the overview.
-    do
-        local parts = {}
-        for i = 1, #nodes do parts[#parts + 1] = string.format("%.0f,%.0f", nodes[i].x, nodes[i].z) end
-        log("ROUTEDUMP %s", table.concat(parts, " "))
-    end
+    log("Route built: %d nodes from %d segment(s) — %d AD, %d straight",
+        #nodes, #seq - 1, adRouted, straightSegs)
     return (#nodes > 0) and nodes or nil
 end
 
@@ -1259,6 +1021,9 @@ function NaviHelper:updateRoute()
         end
         slot.pathNodes = self:buildRoutePath(slot.route, vx, vz, hdx, hdz)
         slot.currentPathIndex = 1
+        -- Precompute the maneuver plan once for this route; the arrow/turn logic reads it per frame.
+        slot.turns, slot.cumArc = computeRouteTurns(slot.pathNodes)
+        slot.turnProgressIdx = 1
         NaviHelper.pathDirty = false
         slot.lastVehicleX = vx
         slot.lastVehicleZ = vz
@@ -1266,41 +1031,15 @@ function NaviHelper:updateRoute()
 end
 
 function NaviHelper:update(dt)
-    if RoadStats and RoadStats.maybeAutoLog then pcall(RoadStats.maybeAutoLog) end
-    if RoadGraph and RoadGraph.stepBuild and not RoadGraph.ready then pcall(function() RoadGraph:stepBuild() end) end
-    -- VTRACK: log vehicle position while driving on roads, for offline overview<->world
-    -- calibration (fit the transform so the driven track lands on the overview roads).
-    pcall(function()
-        local v = (g_currentMission and g_currentMission.controlledVehicle)
-            or NaviHelper.lastActiveVehicle
-        if v == nil or v.rootNode == nil then return end
-        local t = g_currentMission.time or 0
-        if NaviHelper._vtrackAt == nil then NaviHelper._vtrackAt = 0 end
-        if t - NaviHelper._vtrackAt < 1500 then return end
-        local x, _, z = getWorldTranslation(v.rootNode)
-        if NaviHelper._vtrackLast then
-            local dx, dz = x - NaviHelper._vtrackLast[1], z - NaviHelper._vtrackLast[2]
-            if dx * dx + dz * dz < 9 then return end  -- moved < 3m -> skip (parked)
-        end
-        NaviHelper._vtrackAt = t
-        NaviHelper._vtrackLast = { x, z }
-        -- sample ground material + COLOR under the tyres (road detection: grey=road).
-        local mid, cr, cg, cb = "?", -1, -1, -1
-        if getTerrainAttributesAtWorldPos ~= nil and g_currentMission.terrainRootNode ~= nil then
-            local ty = 0
-            if getTerrainHeightAtWorldPos ~= nil then
-                local okh, h = pcall(getTerrainHeightAtWorldPos, g_currentMission.terrainRootNode, x, 0, z)
-                if okh and h then ty = h end
-            end
-            local ok, r, g, b, _, materialId = pcall(getTerrainAttributesAtWorldPos,
-                g_currentMission.terrainRootNode, x, ty, z, true, true, true, true, false)
-            if ok then
-                if materialId ~= nil then mid = tostring(materialId) end
-                cr, cg, cb = r or -1, g or -1, b or -1
-            end
-        end
-        log("VTRACK %.1f %.1f mat=%s rgb=%.3f,%.3f,%.3f", x, z, mid, cr, cg, cb)
-    end)
+    -- Track the active vehicle. controlledVehicle is non-nil in this logic context (unlike the
+    -- draw context), so this is the reliable source for "which vehicle am I in right now".
+    local cv = g_currentMission and g_currentMission.controlledVehicle
+    if cv ~= nil then NaviHelper.lastActiveVehicle = cv end
+    -- Inject our route-line settings into the General Settings page (idempotent; retries until
+    -- the in-game menu is built).
+    if NaviHelperSettings and not NaviHelperSettings._menuInjected and NaviHelperSettings.injectMenu then
+        pcall(function() NaviHelperSettings:injectMenu() end)
+    end
     local ok, err = pcall(function()
         local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
             or (g_currentMission and g_currentMission.controlledVehicle)
@@ -1336,13 +1075,14 @@ function NaviHelper:computeNavData(vehicle, currentTime)
     if not vx or not vz then return nil end
 
     local pointX, pointZ = effX, effZ
-    local distNext, distTotal, turnDist, turnDir
+    local distNext, distTotal, turnDist, turnDir, turnAngle
     local cacheValid = (currentTime - NaviHelper.lastDistanceUpdateTime) < (NaviHelper.distanceCacheTime or 500)
     if cacheValid and NaviHelper.cachedDistTotal then
         distNext = NaviHelper.cachedDistNext
         distTotal = NaviHelper.cachedDistTotal
         turnDist = NaviHelper.cachedTurnDist
         turnDir = NaviHelper.cachedTurnDir
+        turnAngle = NaviHelper.cachedTurnAngle
         pointX = NaviHelper.cachedPointX or effX
         pointZ = NaviHelper.cachedPointZ or effZ
     elseif effPath and #effPath > 0 then
@@ -1378,13 +1118,15 @@ function NaviHelper:computeNavData(vehicle, currentTime)
             end
         end
 
-        turnDist, turnDir = self:findNextTurn(effPath, effPathIdx, vehicle)
+        turnDist, turnDir, turnAngle = self:findNextTurn(effPath, effPathIdx, vehicle)
+        log("TURNDBG path=%d turnDist=%s dir=%s angle=%s", #effPath, tostring(turnDist and string.format("%.0f", turnDist)), tostring(turnDir), turnAngle and string.format("%.0f", math.deg(turnAngle)) or "nil")
 
         NaviHelper.lastDistanceUpdateTime = currentTime
         NaviHelper.cachedDistNext = distNext
         NaviHelper.cachedDistTotal = distTotal
         NaviHelper.cachedTurnDist = turnDist
         NaviHelper.cachedTurnDir = turnDir
+        NaviHelper.cachedTurnAngle = turnAngle
         NaviHelper.cachedPointX = pointX
         NaviHelper.cachedPointZ = pointZ
     else
@@ -1395,6 +1137,7 @@ function NaviHelper:computeNavData(vehicle, currentTime)
         NaviHelper.cachedDistTotal = distTotal
         NaviHelper.cachedTurnDist = nil
         NaviHelper.cachedTurnDir = nil
+        NaviHelper.cachedTurnAngle = nil
         NaviHelper.cachedPointX = effX
         NaviHelper.cachedPointZ = effZ
     end
@@ -1402,7 +1145,7 @@ function NaviHelper:computeNavData(vehicle, currentTime)
     return {
         effPath = effPath, effPathIdx = effPathIdx, destName = destName,
         vx = vx, vz = vz, distTotal = distTotal,
-        turnDist = turnDist, turnDir = turnDir,
+        turnDist = turnDist, turnDir = turnDir, turnAngle = turnAngle,
     }
 end
 
@@ -1429,6 +1172,14 @@ end
 function NaviHelper:drawRouteLine(vehicle, pathToDraw, effPathIdx, vx, vz)
     if not NaviHelper.drawRouteOnGround then return end
 
+    -- Lazy-load the I3D line here: at loadMap time terrainRootNode may not exist yet, so the
+    -- one-shot load there silently fails and the route falls back to the see-through drawDebugLine.
+    -- By draw time the world is ready. Cap attempts so a genuine load failure doesn't retry forever.
+    if NaviHelper.routeLineRootNode == nil and (NaviHelper._routeLineAttempts or 0) < 30 then
+        NaviHelper._routeLineAttempts = (NaviHelper._routeLineAttempts or 0) + 1
+        self:tryLoadRouteLineI3D()
+    end
+
     local haveSegments = NaviHelper.routeLineUseI3D and NaviHelper.routeLineSegmentNodes
     if not pathToDraw or #pathToDraw <= 1 then
         -- Hide all segments when there is no path.
@@ -1446,29 +1197,55 @@ function NaviHelper:drawRouteLine(vehicle, pathToDraw, effPathIdx, vx, vz)
     local endIdx = math.min(startIdx + NaviHelper.routeLineMaxSegments, #pathToDraw - 1)
     local numSegmentsToShow = endIdx - startIdx + 1
 
-    if haveSegments and NaviHelper.routeLineRootNode and setWorldTranslation and setWorldRotation and setScale then
-        -- AutoDrive's line.i3d segments (our scene, so they stay visible).
+    if haveSegments and NaviHelper.routeLineRootNode and setWorldTranslation and setScale then
+        -- Breadcrumb trail: a small flat dot every `spacing` metres along the path (more immersive
+        -- than a continuous ribbon). Reuses the segment pool; the width value sets the dot size.
+        local segs = NaviHelper.routeLineSegmentNodes
+        local pool = #segs
+        local spacing = NaviHelper.routeDotSpacing or 3.5
+        local dotSize = NaviHelper.routeLineThickness or 0.4
+        local cr, cg, cb = NaviHelper.routeLineColorR, NaviHelper.routeLineColorG, NaviHelper.routeLineColorB
+        local ca = NaviHelper.routeLineColorA or 0.6
         pcall(function()
-            for k, seg in ipairs(NaviHelper.routeLineSegmentNodes) do
-                local a = (k <= numSegmentsToShow) and pathToDraw[startIdx + k - 1] or nil
-                local b_ = (k <= numSegmentsToShow) and pathToDraw[startIdx + k] or nil
-                if a and b_ and a.x and a.z and b_.x and b_.z then
-                    local y0, y1 = a.y or 0, b_.y or 0
-                    if (y0 == 0 or y1 == 0) and g_terrainNode and getTerrainHeightAtWorldPos then
-                        if y0 == 0 then y0 = getTerrainHeightAtWorldPos(g_terrainNode, a.x, 0, a.z) or 0 end
-                        if y1 == 0 then y1 = getTerrainHeightAtWorldPos(g_terrainNode, b_.x, 0, b_.z) or 0 end
-                    end
-                    y0, y1 = y0 + 0.2, y1 + 0.2
-                    local dx, dz = b_.x - a.x, b_.z - a.z
-                    local len = math.sqrt(dx * dx + dz * dz)
-                    if len < 0.01 then len = 1 end
-                    setWorldTranslation(seg, (a.x + b_.x) * 0.5, (y0 + y1) * 0.5, (a.z + b_.z) * 0.5)
-                    setWorldRotation(seg, 0, math.atan2(dx, dz), 0)
-                    setScale(seg, (NaviHelper.routeLineThickness or 1), 1, len)
-                    if setVisibility then setVisibility(seg, true) end
-                elseif setVisibility then
-                    setVisibility(seg, false)
+            local used = 0
+            local function placeDot(x, z, yIn)
+                local seg = segs[used + 1]
+                if seg == nil then return false end
+                local y = yIn or 0
+                if y == 0 and g_terrainNode and getTerrainHeightAtWorldPos then
+                    y = getTerrainHeightAtWorldPos(g_terrainNode, x, 0, z) or 0
                 end
+                setWorldTranslation(seg, x, y + 0.15, z)
+                if setWorldRotation then setWorldRotation(seg, 0, 0, 0) end
+                setScale(seg, dotSize, 1, dotSize)
+                if setShaderParameter then setShaderParameter(seg, "lineColor", cr, cg, cb, ca, false) end
+                if setVisibility then setVisibility(seg, true) end
+                used = used + 1
+                return used < pool
+            end
+            local cont = true
+            local p0 = pathToDraw[startIdx]
+            if p0 and p0.x then cont = placeDot(p0.x, p0.z, p0.y) end
+            local acc = 0
+            for i = startIdx, #pathToDraw - 1 do
+                if not cont then break end
+                local a, b_ = pathToDraw[i], pathToDraw[i + 1]
+                if a and b_ and a.x and b_.x then
+                    local dx, dz = b_.x - a.x, b_.z - a.z
+                    local seglen = math.sqrt(dx * dx + dz * dz)
+                    if seglen > 0 then
+                        local pos = spacing - acc
+                        while pos < seglen and cont do
+                            local t = pos / seglen
+                            cont = placeDot(a.x + dx * t, a.z + dz * t, nil)
+                            pos = pos + spacing
+                        end
+                        acc = (acc + seglen) % spacing
+                    end
+                end
+            end
+            for k = used + 1, pool do
+                if setVisibility then setVisibility(segs[k], false) end
             end
         end)
     elseif drawDebugLine then
@@ -1492,31 +1269,107 @@ function NaviHelper:drawRouteLine(vehicle, pathToDraw, effPathIdx, vx, vz)
 end
 
 -- Draw the HUD text: destination name, next-turn instruction, total distance.
-function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath)
-    -- Turn instruction: distance to next turn; if going straight, only show when very close (like a real navi).
-    local turnStr
-    if turnDist and turnDir and turnDist < 5000 then
-        turnStr = string.format("%s %.0fm %s", tr("NAVIHELPER_HUD_IN", "in"), turnDist, turnDir)
-    elseif effPath and #effPath > 2 and distTotal and distTotal < 50 then
-        turnStr = string.format("%.0f m", distTotal)
-    end
-    local totalStr = (distTotal and distTotal < 1e6) and string.format("%.0f m", distTotal) or "-"
+-- Map a turn (direction text + magnitude in radians) to a maneuver-arrow asset name.
+local function turnArrowName(turnDir, angle)
+    if angle == nil then return "straight" end
+    local deg = math.deg(angle)
+    local side = (turnDir == tr("NAVIHELPER_DIR_RIGHT", "rechts")) and "right" or "left"
+    if deg < 22 then return "straight"
+    elseif deg < 40 then return "slight_" .. side
+    elseif deg < 78 then return side
+    elseif deg < 150 then return "sharp_" .. side
+    else return "uturn" end
+end
 
+-- Lazy-load (and cache) a turn-arrow image overlay.
+function NaviHelper:arrowOverlay(name)
+    NaviHelper.arrowOverlays = NaviHelper.arrowOverlays or {}
+    local cached = NaviHelper.arrowOverlays[name]
+    if cached ~= nil then return cached or nil end
+    local id = nil
+    if createImageOverlay ~= nil and NaviHelper.modDirectory then
+        id = createImageOverlay(NaviHelper.modDirectory .. "textures/arrows/arrow_" .. name .. ".png")
+    end
+    NaviHelper.arrowOverlays[name] = id or false
+    return id
+end
+
+-- Screen-space bounding box (x1,y1,x2,y2) of the whole HUD widget around its centre (cx, cy).
+-- Used both for the drag hit-test and for the hover/drag highlight, so they always match what is
+-- actually drawn. Spans from just below the "Total" line up over the maneuver arrow.
+local function hudWidgetBox(cx, cy, aspect)
+    local halfW = 0.06
+    local top = cy + 0.05 + 0.045 * aspect + 0.02   -- arrow top (see drawHud) + margin
+    local bottom = cy - 0.02
+    return cx - halfW, bottom, cx + halfW, top
+end
+
+-- HUD: a glanceable maneuver arrow (straight / slight / turn / sharp / U-turn), the distance
+-- number under it, and a proximity bar that depletes as you approach — plus destination + total.
+function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath, turnAngle)
+    local aspect = g_screenAspectRatio or (16 / 9)
+    local cx = NaviHelper.hudCenterX or 0.5
+    local cy = NaviHelper.hudCenterY or 0.12
+    local hasTurn = turnDist ~= nil and turnDist < 5000
+
+    -- Reposition affordance: a faint panel behind the widget while the cursor hovers it (mouse free
+    -- via right-click) or while dragging, so the grab area is visible without cluttering normal play.
+    if (NaviHelper.hudHover or NaviHelper.hudDragging) and renderOverlay and setOverlayColor then
+        if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
+            NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
+        end
+        if NaviHelper.dotOverlayId then
+            local x1, y1, x2, y2 = hudWidgetBox(cx, cy, aspect)
+            pcall(function()
+                setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, NaviHelper.hudDragging and 0.18 or 0.10)
+                renderOverlay(NaviHelper.dotOverlayId, x1, y1, x2 - x1, y2 - y1)
+                setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, 1)
+            end)
+        end
+    end
+
+    -- Maneuver arrow (straight when no turn is imminent).
+    local arrowId = self:arrowOverlay(hasTurn and turnArrowName(turnDir, turnAngle) or "straight")
+    local aw, ah = 0.045, 0.045 * aspect
+    local ay = cy + 0.05
+    if arrowId and setOverlayColor and renderOverlay then
+        pcall(function()
+            setOverlayColor(arrowId, 1, 1, 1, 1)
+            renderOverlay(arrowId, cx - aw * 0.5, ay, aw, ah)
+        end)
+    end
+
+    -- Proximity bar (only when a turn is near): full far out, depletes to nothing at the turn.
+    if hasTurn and NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
+        NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
+    end
+    if hasTurn and NaviHelper.dotOverlayId and setOverlayColor and renderOverlay then
+        local frac = math.max(0, math.min(1, turnDist / 200))
+        local fullW, barH = 0.06, 0.006
+        local bx, by = cx - fullW * 0.5, ay - 0.012
+        pcall(function()
+            setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, 0.16)
+            renderOverlay(NaviHelper.dotOverlayId, bx, by, fullW, barH)
+            setOverlayColor(NaviHelper.dotOverlayId, 0.27, 0.77, 0.37, 0.95)
+            renderOverlay(NaviHelper.dotOverlayId, bx, by, fullW * frac, barH)
+            setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, 1)
+        end)
+    end
+
+    -- Text: distance number (just the number), destination, total.
     local renderFn = renderText or renderTextOverlay
     if not renderFn then return end
+    local totalStr = (distTotal and distTotal < 1e6) and string.format("%.0f m", distTotal) or "-"
     pcall(function()
-        if setTextAlignment then
-            setTextAlignment(RenderText and RenderText.ALIGN_CENTER or 1)
-        end
+        if setTextAlignment then setTextAlignment(RenderText and RenderText.ALIGN_CENTER or 1) end
         if setTextColor then setTextColor(1, 1, 1, 1) end
-        local cx = NaviHelper.hudCenterX
+        if hasTurn then
+            renderFn(cx, cy + 0.026, 0.022, string.format("%.0f m", turnDist))
+        end
         if destName and destName ~= "" then
-            renderFn(cx, NaviHelper.hudCenterY + 0.04, 0.018, destName)
+            renderFn(cx, cy + 0.012, 0.015, destName)
         end
-        if turnStr then
-            renderFn(cx, NaviHelper.hudCenterY + 0.02, 0.02, turnStr)
-        end
-        renderFn(cx, NaviHelper.hudCenterY, 0.018, tr("NAVIHELPER_HUD_TOTAL", "Total") .. ": " .. totalStr)
+        renderFn(cx, cy, 0.015, tr("NAVIHELPER_HUD_TOTAL", "Total") .. ": " .. totalStr)
     end)
 end
 
@@ -1547,17 +1400,100 @@ function NaviHelper:drawForVehicle(vehicle)
     end
 
     self:drawRouteLine(vehicle, nav.effPath, nav.effPathIdx, nav.vx, nav.vz)
-    self:drawHud(distTotal, nav.turnDist, nav.turnDir, nav.destName, nav.effPath)
+    self:drawHud(distTotal, nav.turnDist, nav.turnDir, nav.destName, nav.effPath, nav.turnAngle)
+end
+
+-- Breadcrumb the active route onto the small HUD minimap (bottom-left), every frame, so you get
+-- the "big picture" at a glance like a real sat-nav. Mirrors the ESC-map drawing via worldToMinimapPos.
+function NaviHelper:drawMinimapRoute()
+    if not NaviHelper.drawRouteOnMinimap then return end
+    if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
+        NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
+    end
+    if NaviHelper.dotOverlayId == nil then return end
+
+    local v = NaviHelper.drawVehicle or NaviHelper.lastActiveVehicle
+        or (g_currentMission and g_currentMission.controlledVehicle)
+    if v == nil then return end
+    local key = vehicleKey(v)
+    local slot = key and NaviHelper.vehicleTargets and NaviHelper.vehicleTargets[key]
+    if not slot or not slot.route or #slot.route == 0 then return end
+
+    local worldLine = {}
+    if slot.pathNodes ~= nil and #slot.pathNodes >= 2 then
+        for i = 1, #slot.pathNodes do worldLine[#worldLine + 1] = { slot.pathNodes[i].x, slot.pathNodes[i].z } end
+    else
+        local vx, _, vz = self:getVehiclePosition(v)
+        if vx and vz then worldLine[#worldLine + 1] = { vx, vz } end
+        for i = 1, #slot.route do worldLine[#worldLine + 1] = { slot.route[i].x, slot.route[i].z } end
+    end
+
+    local screenLine = {}
+    for i = 1, #worldLine do
+        local sx, sy = worldToMinimapPos(worldLine[i][1], worldLine[i][2])
+        if sx then screenLine[#screenLine + 1] = { sx, sy } end
+    end
+    -- finer dots/spacing than the ESC map, since the minimap is small
+    drawPolylineBreadcrumb(NaviHelper.dotOverlayId, screenLine, g_screenAspectRatio or (16 / 9), 0.0026, 0.0055)
+end
+
+-- Drag the nav widget with the mouse. The engine calls this on every mouse event because NaviHelper
+-- is an addModEventListener object. Active only when the cursor is free (the player has toggled the
+-- camera off with right-click, exactly like AutoDrive's movable HUD) and the widget is on screen.
+-- Left-press inside the widget box grabs it; moving drags it; release stores the new position.
+function NaviHelper:mouseEvent(posX, posY, isDown, isUp, button)
+    local cursorFree = g_inputBinding and g_inputBinding.getShowMouseCursor
+        and g_inputBinding:getShowMouseCursor()
+    -- No free cursor, or widget not currently shown -> never drag, and drop any in-progress drag.
+    if not cursorFree or not NaviHelper.navAidOn or not NaviHelper.drawVehicle then
+        NaviHelper.hudHover = false
+        if NaviHelper.hudDragging then NaviHelper.hudDragging = false end
+        return
+    end
+
+    local LEFT = (Input and Input.MOUSE_BUTTON_LEFT) or 1
+    local aspect = g_screenAspectRatio or (16 / 9)
+    local cx = NaviHelper.hudCenterX or 0.5
+    local cy = NaviHelper.hudCenterY or 0.12
+    local x1, y1, x2, y2 = hudWidgetBox(cx, cy, aspect)
+    local inside = posX >= x1 and posX <= x2 and posY >= y1 and posY <= y2
+    NaviHelper.hudHover = inside or NaviHelper.hudDragging
+
+    if button == LEFT and isDown and inside and not NaviHelper.hudDragging then
+        -- Grab: remember the offset from the cursor to the centre so the widget does not jump.
+        NaviHelper.hudDragging = true
+        NaviHelper.hudGrabDX = posX - cx
+        NaviHelper.hudGrabDY = posY - cy
+    elseif NaviHelper.hudDragging and (isUp and button == LEFT) then
+        -- Drop: persist the new position so it survives reloads (same store as the other settings).
+        NaviHelper.hudDragging = false
+        if NaviHelperSettings then
+            NaviHelperSettings.hudCenterX = NaviHelper.hudCenterX
+            NaviHelperSettings.hudCenterY = NaviHelper.hudCenterY
+            if NaviHelperSettings.saveToXML then pcall(function() NaviHelperSettings:saveToXML() end) end
+        end
+        log("HUD moved to %.3f, %.3f", NaviHelper.hudCenterX, NaviHelper.hudCenterY)
+    elseif NaviHelper.hudDragging then
+        -- Drag: follow the cursor, keeping the grab offset, clamped so it stays fully on screen.
+        local nx = posX - (NaviHelper.hudGrabDX or 0)
+        local ny = posY - (NaviHelper.hudGrabDY or 0)
+        NaviHelper.hudCenterX = math.max(0.08, math.min(0.92, nx))
+        NaviHelper.hudCenterY = math.max(0.04, math.min(0.80, ny))
+    end
 end
 
 function NaviHelper:draw()
-    local controlled = g_currentMission and g_currentMission.controlledVehicle
-    if NaviHelper.navAidOn and controlled and NaviHelper.drawVehicle and NaviHelper.drawVehicle ~= controlled then
-        NaviHelper.drawVehicle = controlled
+    -- Keep the drawn route bound to the active vehicle. controlledVehicle is often nil in the draw
+    -- context (FS25 quirk), so fall back to the tracked active vehicle — each vehicle shows its own
+    -- route, and switching vehicles switches the displayed route.
+    local active = (g_currentMission and g_currentMission.controlledVehicle) or NaviHelper.lastActiveVehicle
+    if NaviHelper.navAidOn and active and NaviHelper.drawVehicle ~= active then
+        NaviHelper.drawVehicle = active
         NaviHelper.lastEffectiveTarget = nil
     end
     if not NaviHelper.navAidOn or not NaviHelper.drawVehicle then return end
     self:drawForVehicle(NaviHelper.drawVehicle)
+    pcall(function() self:drawMinimapRoute() end)
 end
 
 addModEventListener(NaviHelper)

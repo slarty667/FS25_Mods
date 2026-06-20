@@ -3,7 +3,8 @@
 	<text name="input_NAVIHELPER_TOGGLE_UI">NaviHelper: Toggle UI</text>
 	<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP">NaviHelper: Map hint</text>
 	<text name="input_NAVIHELPER_CLEAR_TARGET">NaviHelper: Clear route</text>
-	<text name="input_NAVIHELPER_SET_TARGET_AHEAD">NaviHelper: Set target ahead</text>
+	<text name="input_NAVIHELPER_SET_TARGET_AHEAD">NaviHelper: Navigate to AutoDrive destination</text>
+	<text name="NAVIHELPER_MSG_NO_AD_DEST">NaviHelper: No AutoDrive destination selected</text>
 	<text name="NAVIHELPER_MSG_DESTINATION_REACHED">Destination reached</text>
 	<text name="NAVIHELPER_DIR_LEFT">left</text>
 	<text name="NAVIHELPER_DIR_RIGHT">right</text>
@@ -12,4 +13,12 @@
 	<text name="NAVIHELPER_MSG_MAP_HINT">NaviHelper: In the map, Ctrl+click = add point, Shift+click = remove last.</text>
 	<text name="NAVIHELPER_MSG_NEED_AUTODRIVE">NaviHelper: No destination. Set one with Ctrl+click in the map (or in AutoDrive).</text>
 	<text name="NAVIHELPER_MSG_SELECT_TARGET_IN_AD">NaviHelper: Please select a destination in AutoDrive (e.g. the "Drive" window).</text>
+	<text name="nh_section_title">NaviHelper</text>
+	<text name="ms_tooltip_range_bounds">Adjustable from %s to %s in steps of %s.</text>
+	<text name="nh_drawRouteOnGround_short">Route line on ground</text>
+	<text name="nh_drawRouteOnGround_long">Show the route as a line on the ground.</text>
+	<text name="nh_routeLineThickness_short">Line width</text>
+	<text name="nh_routeLineThickness_long">Width of the route line on the ground.</text>
+	<text name="nh_routeLineColorA_short">Line brightness</text>
+	<text name="nh_routeLineColorA_long">Glow of the route line. Low = subtle, high = bright.</text>
 </l10n>

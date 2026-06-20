@@ -93,7 +93,7 @@ local function closestNodeToWorld(gm, x, z, maxDist)
     return bestId, math.sqrt(bestDist)
 end
 
--- Is a world point on cultivable field ground? (engine field data, like GreyRouter.isFieldAt)
+-- Is a world point on cultivable field ground? (engine field data via FSDensityMapUtil)
 local function isFieldAtWorld(wx, wz)
     local m = g_currentMission
     if m == nil then return false end
@@ -172,8 +172,7 @@ end
 -- Heading-aware START node: prefer the nearest waypoint that lies AHEAD of the vehicle, so the
 -- route continues in the current driving direction instead of opening with a U-turn (and starts
 -- on the track the vehicle is already on). Falls back to the plain nearest node when no heading
--- is given or nothing suitable lies ahead. The old start-turn penalty lived in GreyRouter, which
--- AD routing now bypasses, so heading awareness is re-applied here.
+-- is given or nothing suitable lies ahead.
 local function startNodeToWorld(gm, x, z, headX, headZ, maxDist)
     maxDist = maxDist or 500
     if headX == nil or headZ == nil then return closestNodeToWorld(gm, x, z, maxDist) end
@@ -205,6 +204,9 @@ end
 -- ---------------------------------------------------------------------------------------------
 local FIELD_COST_FACTOR = 8.0       -- multiply step cost when the target node sits on a field
 local START_TURN_PENALTY = 2000.0   -- added to a first hop that points behind the vehicle
+local REVERSE_LANE_FACTOR = 1.20    -- mild penalty for an edge only reachable via `incoming`
+                                    -- (the wrong-way lane) -> prefer the right lane on 2-lane
+                                    -- roads, but small enough to never detour a one-way field track
 local ASTAR_MAX_ITER = 200000
 
 -- per-waypoint cache of "is on cultivable field ground" (static per map; cleared on cache reset)
@@ -269,8 +271,10 @@ local function undirectedAStar(gm, startId, destId, headX, headZ)
         if not closed[cid] then
             closed[cid] = true
             local cwp = wps[cid]
+            local fwd = {}   -- neighbours reachable in the legal (forward) direction
+            if type(cwp.out) == "table" then for _, o in pairs(cwp.out) do fwd[o] = true end end
             local nb = {}
-            if type(cwp.out) == "table" then for _, o in pairs(cwp.out) do nb[o] = true end end
+            for o in pairs(fwd) do nb[o] = true end
             if type(cwp.incoming) == "table" then for _, o in pairs(cwp.incoming) do nb[o] = true end end
             for nid in pairs(nb) do
                 local nwp = wps[nid]
@@ -278,6 +282,7 @@ local function undirectedAStar(gm, startId, destId, headX, headZ)
                     local dx, dz = nwp.x - cwp.x, nwp.z - cwp.z
                     local step = math.sqrt(dx * dx + dz * dz)
                     if nodeOnField(nid, nwp) then step = step * FIELD_COST_FACTOR end
+                    if not fwd[nid] then step = step * REVERSE_LANE_FACTOR end  -- wrong-way lane
                     if cid == startId and hl > 1e-4 and (dx * headX + dz * headZ) < 0 then
                         step = step + START_TURN_PENALTY     -- first hop points backwards
                     end

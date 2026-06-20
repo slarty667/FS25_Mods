@@ -15,10 +15,11 @@ local SETTINGS_FILE = "FS25_NaviHelper.xml"
 -- key -> { default, type }. type: "bool" | "float" | "int"
 local DEFAULTS = {
     drawRouteOnGround        = { true,  "bool"  },
-    routeLineColorR          = { 0.2,   "float" },
-    routeLineColorG          = { 0.8,   "float" },
-    routeLineColorB          = { 0.2,   "float" },
-    routeLineThickness       = { 1.2,   "float" },
+    routeLineColorR          = { 0.10,  "float" },
+    routeLineColorG          = { 0.42,  "float" },
+    routeLineColorB          = { 0.20,  "float" },
+    routeLineColorA          = { 0.25,  "float" },  -- emissive strength (rgb*a); low = calm, no bloom
+    routeLineThickness       = { 0.40,  "float" },  -- width scale; lower = thinner stripe
     routeLineMaxSegments     = { 50,    "int"   },
     effectiveTargetCacheTime = { 4000,  "int"   },
     distanceCacheTime        = { 500,   "int"   },
@@ -91,4 +92,53 @@ function NaviHelperSettings:saveToXML()
     end
     pcall(function() saveXMLFile(xmlId) end)
     pcall(function() delete(xmlId) end)
+end
+
+---------------------------------------------------------------------------
+-- In-game settings UI (vanilla General Settings page) via UIHelper.lua.
+-- Owner table holds the control objects; the actual values live on
+-- NaviHelperSettings and, on change, are pushed onto the live NaviHelper
+-- table (which the drawing reads) and persisted to XML.
+-- Each control needs l10n keys "nh_<name>_short" and "nh_<name>_long".
+---------------------------------------------------------------------------
+NaviHelperSettingsUI = { controls = {} }
+
+NaviHelperSettings.controlProperties = {
+    { name = "drawRouteOnGround",  autoBind = true },
+    { name = "routeLineThickness", min = 0.2,  max = 1.5, step = 0.1,  autoBind = true },
+    { name = "routeLineColorA",    min = 0.05, max = 1.0, step = 0.05, autoBind = true },
+}
+
+-- Copy the managed settings onto the live NaviHelper table the drawing reads.
+function NaviHelperSettings:applyToLive()
+    if NaviHelper == nil then return end
+    for _, k in ipairs(self:keys()) do
+        if self[k] ~= nil then NaviHelper[k] = self[k] end
+    end
+end
+
+-- Idempotent; safe to retry from update() until the in-game menu is ready.
+function NaviHelperSettings:injectMenu()
+    if self._menuInjected then return true end
+    if UIHelper == nil then return false end
+    local inGameMenu = g_gui and g_gui.screenControllers and g_gui.screenControllers[InGameMenu]
+    if not inGameMenu then return false end
+    local settingsPage = inGameMenu.pageSettings
+    if not settingsPage or not settingsPage.generalSettingsLayout then return false end
+
+    self:applyDefaults()
+    UIHelper.createControlsDynamically(
+        settingsPage,
+        "nh_section_title",       -- i18n key for the section header
+        NaviHelperSettingsUI,     -- owning table (control objects)
+        self.controlProperties,
+        "nh_"                     -- l10n key prefix
+    )
+    UIHelper.setupAutoBindControls(NaviHelperSettingsUI, self, function(_, _control)
+        NaviHelperSettings:applyToLive()
+        NaviHelperSettings:saveToXML()
+    end)
+
+    self._menuInjected = true
+    return true
 end

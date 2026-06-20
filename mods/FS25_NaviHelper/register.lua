@@ -4,12 +4,9 @@
   with all driveable vehicles at runtime (same pattern as FS25_AutoDrive).
 ]]
 
+source(Utils.getFilename("scripts/lib/UIHelper.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/Settings.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/AutoDriveBridge.lua", g_currentModDirectory))
-source(Utils.getFilename("scripts/RoadStats.lua", g_currentModDirectory))
-source(Utils.getFilename("scripts/RoadGraph.lua", g_currentModDirectory))
-source(Utils.getFilename("scripts/RoadGraphFile.lua", g_currentModDirectory))
-source(Utils.getFilename("scripts/GreyRouter.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/NaviHelper.lua", g_currentModDirectory))
 source(Utils.getFilename("scripts/NaviHelperVehicle.lua", g_currentModDirectory))
 

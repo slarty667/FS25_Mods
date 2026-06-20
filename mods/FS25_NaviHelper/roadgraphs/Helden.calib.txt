@@ -1,6 +1,0 @@
-Helden — Overview->Engine Kalibrierung (aus VTRACK-Fahrspur, fit_calib.py, Ähnlichkeit)
-Skalierung ~1.551 px/m, Rotation ~174°, Welt-Ausdehnung ~2641m (Overview > Terrain 2048).
-Re-Export:
-  python3 tools/roadgraph/extract.py <overview.dds> <out> --name Helden \
-    --calib="-0.641177,0.065114,1470.42225,-0.065114,-0.641177,1843.13622"
-Residuum: ~8m zu Strassenpixeln, ~16m Median zu Graph-Knoten.

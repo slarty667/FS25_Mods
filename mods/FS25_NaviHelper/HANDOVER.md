@@ -2,6 +2,49 @@
 
 Übergabe nach einer langen Session. SSoT für den Neustart. Ergänzt `PLAN.md`.
 
+---
+
+## STAND 2026-06-20 (Nachtrag — neueste Session)
+
+Seit dem WPGPS-Knoten ist der Mod auf **reines AutoDrive-Netz-Routing** finalisiert und
+deutlich ausgebaut. Alte verworfene Ansätze sind raus (GreyRouter, RoadGraph[File],
+RoadStats, roadgraphs/Helden.*, alle Konsolen-Commands).
+
+**Features jetzt:**
+- Routing **AD-only**: eigener *ungerichteter* A* über AD-Waypoints (Binary-Heap),
+  Feld-Vermeidung (`isFieldAtWorld`, FIELD_COST_FACTOR), Rechtsspur-Bias
+  (REVERSE_LANE_FACTOR 1.20), Start-Wende-Strafe. Kein AD-Netz → Luftlinie.
+- **Turn-Pfeile** wie echtes Navi (geradeaus/halblinks/links/scharf/U-Turn) + Distanz-Zahl
+  + Proximity-Bar. Ziel per Karten-Klick (Default) oder **Alt-T = Toggle** auf AD-Ziel.
+- **Minimap-Route** (links unten), Routenlinie am Boden (depth-tested, dezent), Settings-Seite.
+- **Widget per Drag&Drop verschiebbar** (siehe Lessons).
+
+**Lessons Learned (neu):**
+1. **Turn-Erkennung pro Frame flackert.** Jeden Frame unabhängig „nächste Abzweigung"
+   suchen kippt an Schwellwert-Grenzen → Pfeil springt zwischen Kurven (3 m links ↔ 669 m
+   rechts). **Fix:** Manöver-Plan **einmal bei Routenbau** berechnen (`computeRouteTurns`:
+   gefensterte Heading-Änderung ±11 m, entstabbert, Peak je Kurve) + `cumArc` pro Knoten.
+   Pro Frame nur „nächste Abzweigung voraus" mit **monoton vorrückendem** Fortschritt
+   (`slot.turnProgressIdx`, springt nicht zurück, wenn die Route sich selbst nah kommt).
+   Distanz = `cumArc[turn] − cumArc[closest]` → zählt sauber runter. Cap `turnWarnRange=300`.
+2. **Drag&Drop HUD ohne Extra-Hook.** NaviHelper ist `addModEventListener` → einfach
+   `function NaviHelper:mouseEvent(posX, posY, isDown, isUp, button)` ergänzen, die Engine
+   ruft's auf (wie `keyEvent`). Gaten auf `g_inputBinding:getShowMouseCursor()` — Rechtsklick
+   gibt in FS den Cursor frei (Kamera-Toggle), dann ist Drag möglich, kein eigener Modus
+   nötig. **Referenz:** AutoDrive `scripts/Hud.lua` (`startMovingHud`/`moveHud`/`stopMovingHud`),
+   registriert via `addModEventListener(AutoDrive)` in `register.lua`. Position persistiert
+   über die schon vorhandenen Settings `hudCenterX/Y`.
+
+**Offen — Live-Verifikation beim nächsten FS-Start** (alles drin, aber nach Game-Restart testen):
+Turn-Distanz zählt runter & Pfeil flackert nicht (Log: `TURNDBG` läuft noch, danach RAUS) ·
+Alt-T schaltet Route auch aus · Widget-Drag + Position bleibt nach Reload.
+
+**Nebenbefund (kein Mod-Bug):** Walz-Auftrag bleibt bei 98% = FS25-Vanilla-Bug. Fix per
+`savegameN/missions.xml`: betroffene `<rollerMission>` → `status="FINISHED"
+finishState="SUCCESS"` + `completion="1.000000"` (uniqueId-gebunden patchen, Backup vorher).
+
+---
+
 ## ⛔ MR. WINSTON WOLF — DEN KNOTEN GELÖST (2026-06-17, abends)
 
 **Die Prämisse "WayPointGPS kann das auf Helden, also können wir das auch" ist FALSCH —

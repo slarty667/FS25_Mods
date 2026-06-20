@@ -13,7 +13,18 @@
 		<en>Manual driving navigation: shows destination name, next-turn instruction and total distance, plus a route line on the ground. Set the route directly in the map with Ctrl+click (works with or without AutoDrive); further Ctrl+clicks add waypoints, Shift+click removes the last point.</en>
 		<de>Manuelle Fahrt-Navigation: zeigt Zielname, Abbiegehinweis und Gesamtdistanz sowie eine Routenlinie am Boden. Route direkt in der Karte per Strg+Klick setzen (mit oder ohne AutoDrive); weitere Strg+Klicks fügen Zwischenpunkte hinzu, Umschalt+Klick löscht den letzten Punkt.</de>
 	</description>
-	<l10n filenamePrefix="l10n/l10n"/>
+	<l10n filenamePrefix="l10n/l10n">
+		<!-- Settings-UI texts must be inline here so the (global) General Settings page resolves
+		     them; external filenamePrefix texts only reach the mod's own scope (HUD). -->
+		<text name="nh_section_title"><en>NaviHelper</en><de>NaviHelper</de></text>
+		<text name="ms_tooltip_range_bounds"><en>Adjustable from %s to %s in steps of %s.</en><de>Einstellbar von %s bis %s in Schritten von %s.</de></text>
+		<text name="nh_drawRouteOnGround_short"><en>Route line on ground</en><de>Routenlinie am Boden</de></text>
+		<text name="nh_drawRouteOnGround_long"><en>Show the route as a line on the ground.</en><de>Zeigt die Route als Linie auf dem Boden an.</de></text>
+		<text name="nh_routeLineThickness_short"><en>Line width</en><de>Linienbreite</de></text>
+		<text name="nh_routeLineThickness_long"><en>Width of the route line on the ground.</en><de>Breite der Routenlinie am Boden.</de></text>
+		<text name="nh_routeLineColorA_short"><en>Line brightness</en><de>Linienhelligkeit</de></text>
+		<text name="nh_routeLineColorA_long"><en>Glow of the route line. Low = subtle, high = bright.</en><de>Eigenleuchten der Routenlinie. Niedrig = dezent, hoch = leuchtend.</de></text>
+	</l10n>
 	<extraSourceFiles>
 		<sourceFile filename="register.lua"/>
 	</extraSourceFiles>

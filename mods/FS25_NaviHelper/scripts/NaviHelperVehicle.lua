@@ -67,7 +67,7 @@ function NaviHelperVehicle:onRegisterActionEvents(_, isOnActiveVehicle)
         NaviHelperVehicle.onToggleUI,
         NaviHelperVehicle.onClearTarget,
         NaviHelperVehicle.onMapSelectionMode,
-        NaviHelperVehicle.onSetTargetAhead,
+        NaviHelperVehicle.onRouteToADDest,
     }
     local registered = 0
     for i, actionName in ipairs(actionNames) do
@@ -115,9 +115,9 @@ function NaviHelperVehicle:onMapSelectionMode()
     end
 end
 
-function NaviHelperVehicle:onSetTargetAhead()
-    if NaviHelper and NaviHelper.onSetTargetAhead then
-        NaviHelper:onSetTargetAhead(self)
+function NaviHelperVehicle:onRouteToADDest()
+    if NaviHelper and NaviHelper.onRouteToADDest then
+        NaviHelper:onRouteToADDest(self)
     end
 end
 

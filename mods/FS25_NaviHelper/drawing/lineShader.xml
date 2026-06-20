@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!--
+    lineShader.xml — FS25_HoldToSteer
+
+    Minimal colourable line shader for the projected driving path.
+    Own implementation (not derived from any third-party mod).
+
+    One float4 parameter "lineColor" (r, g, b, a), set per segment from
+    SegmentPool via setShaderParameter(node, "lineColor", r, g, b, a).
+      - rgb tints the lit surface (diffuse)
+      - emissive = rgb * a, so the line stays readable in shadow / at dusk
+        without blooming to white when the channels are kept below 1.0.
+-->
+<CustomShader version="5">
+    <Parameters>
+        <Parameter name="lineColor" target="lineColor" type="float4" defaultValue="0.02 0.18 0.05 1.0"/>
+    </Parameters>
+    <UvUsages/>
+    <LodLevel startDistance="0">
+        <CodeInjections>
+            <CodeInjection position="OBJECT_PARAMETERS">
+<![CDATA[
+    float4 lineColor;
+]]>
+            </CodeInjection>
+            <CodeInjection position="POST_DIFFUSE_COLOR_FS">
+<![CDATA[
+    diffuseColor.rgb *= object.lineColor.rgb;
+]]>
+            </CodeInjection>
+            <CodeInjection position="EMISSIVE_FS">
+<![CDATA[
+    emissiveColor.rgb = object.lineColor.rgb * object.lineColor.a;
+]]>
+            </CodeInjection>
+        </CodeInjections>
+    </LodLevel>
+</CustomShader>
