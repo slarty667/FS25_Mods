@@ -35,9 +35,8 @@ RoadStats, roadgraphs/Helden.*, alle Konsolen-Commands).
    registriert via `addModEventListener(AutoDrive)` in `register.lua`. Position persistiert
    über die schon vorhandenen Settings `hudCenterX/Y`.
 
-**Offen — Live-Verifikation beim nächsten FS-Start** (alles drin, aber nach Game-Restart testen):
-Turn-Distanz zählt runter & Pfeil flackert nicht (Log: `TURNDBG` läuft noch, danach RAUS) ·
-Alt-T schaltet Route auch aus · Widget-Drag + Position bleibt nach Reload.
+**Live-verifiziert (FS-Start 2026-06-21):** Turn-Distanz zählt runter & Pfeil flackert nicht ·
+Alt-T schaltet Route auch aus · Widget-Drag + Position bleibt nach Reload. `TURNDBG`-Log entfernt.
 
 **Nebenbefund (kein Mod-Bug):** Walz-Auftrag bleibt bei 98% = FS25-Vanilla-Bug. Fix per
 `savegameN/missions.xml`: betroffene `<rollerMission>` → `status="FINISHED"

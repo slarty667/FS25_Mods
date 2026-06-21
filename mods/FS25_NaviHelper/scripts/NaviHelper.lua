@@ -1119,7 +1119,6 @@ function NaviHelper:computeNavData(vehicle, currentTime)
         end
 
         turnDist, turnDir, turnAngle = self:findNextTurn(effPath, effPathIdx, vehicle)
-        log("TURNDBG path=%d turnDist=%s dir=%s angle=%s", #effPath, tostring(turnDist and string.format("%.0f", turnDist)), tostring(turnDir), turnAngle and string.format("%.0f", math.deg(turnAngle)) or "nil")
 
         NaviHelper.lastDistanceUpdateTime = currentTime
         NaviHelper.cachedDistNext = distNext
