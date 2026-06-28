@@ -300,6 +300,10 @@ function NaviHelper:onClearTarget(vehicle)
         NaviHelper.vehicleTargets[key] = nil
     end
     self:invalidateRouteCaches()
+    -- The HUD is immediate-mode (vanishes when draw stops), but the ground route line uses
+    -- persistent I3D segment nodes whose visibility is only reset inside drawRouteLine. After a
+    -- clear, drawForVehicle no longer runs, so hide the segments here or they linger on the ground.
+    self:hideRouteLine()
     log("Route cleared")
 end
 
@@ -1167,6 +1171,19 @@ function NaviHelper:routeLineStartIndex(pathToDraw, effPathIdx, vx, vz, vehicle)
     return math.max(1, bestI - 1)
 end
 
+-- Hide the persistent I3D route-line breadcrumb segments. Pooled scene nodes keep their last
+-- visibility state, so once the route is cleared (Alt+T off, destination reached) and drawRouteLine
+-- stops being called, the ground dots would linger until something hides them. This is that thing.
+function NaviHelper:hideRouteLine()
+    local segs = NaviHelper.routeLineSegmentNodes
+    if not segs or not setVisibility then return end
+    pcall(function()
+        for _, seg in ipairs(segs) do
+            setVisibility(seg, false)
+        end
+    end)
+end
+
 -- Draw the route line on the ground (AutoDrive's I3D segments, or a drawDebugLine fallback).
 function NaviHelper:drawRouteLine(vehicle, pathToDraw, effPathIdx, vx, vz)
     if not NaviHelper.drawRouteOnGround then return end
@@ -1330,7 +1347,7 @@ function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath, tur
     -- Maneuver arrow (straight when no turn is imminent).
     local arrowId = self:arrowOverlay(hasTurn and turnArrowName(turnDir, turnAngle) or "straight")
     local aw, ah = 0.045, 0.045 * aspect
-    local ay = cy + 0.05
+    local ay = cy + 0.062
     if arrowId and setOverlayColor and renderOverlay then
         pcall(function()
             setOverlayColor(arrowId, 1, 1, 1, 1)
@@ -1345,7 +1362,9 @@ function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath, tur
     if hasTurn and NaviHelper.dotOverlayId and setOverlayColor and renderOverlay then
         local frac = math.max(0, math.min(1, turnDist / 200))
         local fullW, barH = 0.06, 0.006
-        local bx, by = cx - fullW * 0.5, ay - 0.012
+        -- Sit the bar in the gap between the arrow (above) and the distance number
+        -- (below, top ~cy+0.048): ~0.004 clearance on each side so nothing touches.
+        local bx, by = cx - fullW * 0.5, cy + 0.052
         pcall(function()
             setOverlayColor(NaviHelper.dotOverlayId, 1, 1, 1, 0.16)
             renderOverlay(NaviHelper.dotOverlayId, bx, by, fullW, barH)
@@ -1395,6 +1414,7 @@ function NaviHelper:drawForVehicle(vehicle)
             local key = v and vehicleKey(v)
             if key and NaviHelper.vehicleTargets then NaviHelper.vehicleTargets[key] = nil end
         end
+        self:hideRouteLine()
         return
     end
 

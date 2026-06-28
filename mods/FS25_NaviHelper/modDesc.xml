@@ -15,7 +15,13 @@
 	</description>
 	<l10n filenamePrefix="l10n/l10n">
 		<!-- Settings-UI texts must be inline here so the (global) General Settings page resolves
-		     them; external filenamePrefix texts only reach the mod's own scope (HUD). -->
+		     them; external filenamePrefix texts only reach the mod's own scope (HUD).
+		     Same for input-action display names: the Controls menu is a global UI, so the
+		     input_* keys must be inline here too (external copies stay for the mod scope). -->
+		<text name="input_NAVIHELPER_TOGGLE_UI"><en>NaviHelper: Toggle UI</en><de>NaviHelper: UI ein/aus</de></text>
+		<text name="input_NAVIHELPER_SET_TARGET_FROM_MAP"><en>NaviHelper: Map hint</en><de>NaviHelper: Karten-Hinweis</de></text>
+		<text name="input_NAVIHELPER_CLEAR_TARGET"><en>NaviHelper: Clear route</en><de>NaviHelper: Route löschen</de></text>
+		<text name="input_NAVIHELPER_SET_TARGET_AHEAD"><en>NaviHelper: Navigate to AutoDrive destination</en><de>NaviHelper: zu AutoDrive-Ziel navigieren</de></text>
 		<text name="nh_section_title"><en>NaviHelper</en><de>NaviHelper</de></text>
 		<text name="ms_tooltip_range_bounds"><en>Adjustable from %s to %s in steps of %s.</en><de>Einstellbar von %s bis %s in Schritten von %s.</de></text>
 		<text name="nh_drawRouteOnGround_short"><en>Route line on ground</en><de>Routenlinie am Boden</de></text>

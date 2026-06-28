@@ -49,6 +49,24 @@ MouseSteering._headTurnReversePending = nil
 MouseSteering._headTurnReversePendingMs = 0
 local HEAD_TURN_REVERSE_DEBOUNCE_MS = 280
 
+-- Release-look abort window. On LMB release we recentre the wheel + head IMMEDIATELY
+-- (snappy "quick correction, then back to straight" feel — zero delay). But the
+-- "release, then flick the mouse to look for traffic" pattern must not snap back: for a
+-- short window after release we keep watching the summed cursor delta, and a flick past
+-- the threshold ABORTS the in-progress recentre and re-grabs the free-look hold (wheel
+-- held, head follows mouse) until the next LMB grip. The window only bounds how late a
+-- flick can still abort; it no longer adds any delay to a normal release. Flicks were
+-- measured at ~80-180ms, so 250 keeps margin at no cost. Surfaced via [HTSgrace] trace.
+local RELEASE_LOOK_ABORT_MS = 250
+local RELEASE_LOOK_MOUSE_THRESHOLD = 0.012  -- summed |dx|+|dy| in normalised screen units
+MouseSteering.debugGrace = false            -- set true to log grace decisions to log.txt
+MouseSteering._releaseGraceActive = false   -- true while the post-release window is open
+MouseSteering._releaseGraceMs = 0           -- elapsed time in the window
+MouseSteering._releaseGraceAccum = 0        -- accumulated cursor movement in the window
+MouseSteering._releaseGraceLastX = nil
+MouseSteering._releaseGraceLastY = nil
+MouseSteering._lookSuppress = false         -- true after a flick: stay in free-look, no recentre
+
 --- Steering-linked yaw ("look into the corner") is cabin-only; chase/outside cameras
 --- use different origRotY semantics — anchoring there pulls the wrong way on LMB release.
 ---@param camera table
@@ -381,8 +399,60 @@ end
 -- handled exclusively by the MOUSESTEERING_TOGGLE_ARMED action event
 -- (binding in modDesc.xml covers MOUSE_BUTTON_2).
 ---------------------------------------------------------------------------
+--- Commit a real LMB release: stop holding, peel head-turn where appropriate, and
+--- start the damped wheel recentre. Extracted so it can run either immediately on
+--- release or deferred after the release-look grace window decides "no flick".
+function MouseSteering:commitRelease(vehicle)
+    self.active = false
+    self._mouseSteerRate = nil
+    self._awaitingRecenter = false
+    self._otherMouseButtonDown = false
+    self._releaseGraceActive = false
+    self._lookSuppress = false
+    -- Forward: keep head-turn state for anchored coast (slow sweep to origRotY).
+    -- Reverse only: peel overlay immediately; coast does not touch rotY anyway.
+    local peelOnRelease = self._headTurnReverseStable
+    if not peelOnRelease and VehicleIntrospection and VehicleIntrospection.getMotion then
+        local veh = vehicle or self:getControlledVehicle()
+        if veh then
+            local ok, _, isRev = pcall(function()
+                return VehicleIntrospection:getMotion(veh)
+            end)
+            if ok and isRev then peelOnRelease = true end
+        end
+    end
+    if peelOnRelease then
+        self:clearSteeringHeadTurn()
+    end
+    local dz = (MouseSteeringSettings and MouseSteeringSettings.deadzone) or 0.02
+    if math.abs(self.steeringValue or 0) > dz then
+        self._steeringCoast = true
+    else
+        self._steeringCoast = false
+        self.steeringValue = 0
+        local drivable = vehicle and vehicle.spec_drivable
+        if drivable and drivable.lastInputValues then
+            drivable.lastInputValues.axisSteer = 0
+            drivable.lastInputValues.axisSteerIsAnalog = false
+            drivable.lastInputValues.axisSteerDeviceCategory = nil
+        end
+    end
+    log("Active OFF (LMB up, coast=%s)", tostring(self._steeringCoast))
+end
+
 function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
     if not self.armed then return end
+    -- Accumulate cursor travel while the release-look grace window is open, so update()
+    -- can tell a deliberate "look for traffic" flick from a plain release.
+    if self._releaseGraceActive then
+        if self._releaseGraceLastX ~= nil then
+            self._releaseGraceAccum = self._releaseGraceAccum
+                + math.abs(posX - self._releaseGraceLastX)
+                + math.abs(posY - self._releaseGraceLastY)
+        end
+        self._releaseGraceLastX = posX
+        self._releaseGraceLastY = posY
+    end
     local vehicle = self:getControlledVehicle()
     if self:isFrontloaderSelectionSuppressingMouse(vehicle) then return end
 
@@ -425,6 +495,9 @@ function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
             -- toggled mouse mode with RMB and then re-grips LMB.
             self._awaitingRecenter = true
             self._otherMouseButtonDown = false
+            -- Re-grip cancels any open release-look grace / free-look hold.
+            self._releaseGraceActive = false
+            self._lookSuppress = false
 
             -- Hand-over: grab the wheel at the current angle (keyboard coast,
             -- mid-turn, etc.). readSteeringTakeoverNormalized matches path-indicator
@@ -435,46 +508,27 @@ function MouseSteering:mouseEvent(posX, posY, isDown, isUp, button)
         end
         if isUp and self.lmbDown then
             self.lmbDown = false
-            self.active = false
-            self._mouseSteerRate = nil
-            self._awaitingRecenter = false
-            self._otherMouseButtonDown = false
-            -- Forward: keep head-turn state for anchored coast (slow sweep to origRotY).
-            -- Reverse only: peel overlay immediately; coast does not touch rotY anyway.
-            local peelOnRelease = self._headTurnReverseStable
-            if not peelOnRelease and VehicleIntrospection and VehicleIntrospection.getMotion then
-                local veh = self:getControlledVehicle()
-                if veh then
-                    local ok, _, isRev = pcall(function()
-                        return VehicleIntrospection:getMotion(veh)
-                    end)
-                    if ok and isRev then peelOnRelease = true end
-                end
-            end
-            if peelOnRelease then
-                self:clearSteeringHeadTurn()
-            end
+            -- Recentre immediately (snappy quick-correction feel, no delay), then open a
+            -- short abort-watch window: a mouse flick within it (looking for traffic)
+            -- re-grabs the free-look hold so the recentre is cancelled mid-flight.
             local dz = (MouseSteeringSettings and MouseSteeringSettings.deadzone) or 0.02
-            if math.abs(self.steeringValue or 0) > dz then
-                -- Damped return: keep the wheel under our analog control and let the
-                -- coast loop ease steeringValue down an exponential curve (soft-close
-                -- feel), clearing the analog markers only once it settles at centre.
-                -- We deliberately do NOT clear the markers here — handing back to the
-                -- engine's *linear* return is what popped on small angles and stopped
-                -- abruptly at centre (card #140, measured).
-                self._steeringCoast = true
-            else
-                -- Sub-deadzone: nothing to ease, centre immediately and hand back.
-                self._steeringCoast = false
-                self.steeringValue = 0
-                local drivable = vehicle and vehicle.spec_drivable
-                if drivable and drivable.lastInputValues then
-                    drivable.lastInputValues.axisSteer = 0
-                    drivable.lastInputValues.axisSteerIsAnalog = false
-                    drivable.lastInputValues.axisSteerDeviceCategory = nil
+            local watch = (math.abs(self.steeringValue or 0) > dz
+                or math.abs(self._headTurnOffsetRad or self._headTurnSmoothed or 0) > 0.001)
+                and RELEASE_LOOK_ABORT_MS > 0
+            local svAtRelease = self.steeringValue or 0
+            local headAtRelease = self._headTurnOffsetRad or 0
+            self:commitRelease(vehicle)
+            if watch then
+                self._releaseGraceActive = true     -- abort-watch window is open
+                self._releaseGraceMs = 0
+                self._releaseGraceAccum = 0
+                self._releaseGraceLastX = posX
+                self._releaseGraceLastY = posY
+                self._lookSuppress = false
+                if self.debugGrace then
+                    log("[HTSgrace] release: recentre + abort-watch sv=%.3f head=%.3f", svAtRelease, headAtRelease)
                 end
             end
-            log("Active OFF (LMB up, coast=%s)", tostring(self._steeringCoast))
         end
     end
 
@@ -699,6 +753,33 @@ function MouseSteering:update(dt)
     end
 
     local vehicle = self:getControlledVehicle()
+    -- Release-look grace: resolve the post-release hold once the window elapses or a
+    -- mouse flick is detected (setup in mouseEvent; see RELEASE_LOOK_* constants).
+    if self._releaseGraceActive then
+        self._releaseGraceMs = self._releaseGraceMs + (dt or g_currentDt or 16)
+        if self._releaseGraceAccum >= RELEASE_LOOK_MOUSE_THRESHOLD then
+            -- Flick within the abort window: cancel the in-progress recentre and re-grab
+            -- the free-look hold (wheel held at its current angle, head follows mouse)
+            -- until the next LMB grip clears it.
+            self._releaseGraceActive = false
+            self._lookSuppress = true
+            self.active = true
+            self._otherMouseButtonDown = true   -- reuse tested hold path
+            self._steeringCoast = false         -- stop the damped recentre; hold current angle
+            self._mouseSteerRate = nil          -- the look-flick must not steer
+            if self.debugGrace then
+                log("[HTSgrace] decided flick=true accum=%.4f thr=%.4f ms=%d -> abort recentre, free-look",
+                    self._releaseGraceAccum, RELEASE_LOOK_MOUSE_THRESHOLD, self._releaseGraceMs)
+            end
+        elseif self._releaseGraceMs >= RELEASE_LOOK_ABORT_MS then
+            -- No flick: the immediate recentre stands, just close the watch window.
+            self._releaseGraceActive = false
+            if self.debugGrace then
+                log("[HTSgrace] decided flick=false accum=%.4f thr=%.4f ms=%d -> recentre kept",
+                    self._releaseGraceAccum, RELEASE_LOOK_MOUSE_THRESHOLD, self._releaseGraceMs)
+            end
+        end
+    end
     -- "On foot" must be detected even though getControlledVehicle() has sticky
     -- fallbacks (drawVehicle / lastActiveVehicle) that keep returning the LAST
     -- vehicle after the player has exited. Those fallbacks are needed while

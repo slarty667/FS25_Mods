@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="105">
+	<author>SAM</author>
+	<version>1.1.0.0</version>
+	<iconFilename>storeItem.png</iconFilename>
+	<iconFilenameSmall>storeItem.png</iconFilenameSmall>
+	<title>
+		<en>Detach Lock (stand still)</en>
+		<de>Abkuppeln nur im Stand</de>
+	</title>
+	<description>
+		<en>Prevents accidental detaching while driving: an implement can only be detached when the vehicle is (nearly) stopped. Hooks the vanilla detach permission check, so it works with the key you already use and can never make detaching impossible.</en>
+		<de>Verhindert versehentliches Abkuppeln waehrend der Fahrt: ein Geraet laesst sich nur abkuppeln, wenn das Fahrzeug (nahezu) steht. Haengt sich an die vanilla Abkuppel-Pruefung, funktioniert also mit deiner gewohnten Taste und kann Abkuppeln nie unmoeglich machen.</de>
+	</description>
+	<l10n filenamePrefix="l10n/l10n"/>
+	<extraSourceFiles>
+		<sourceFile filename="register.lua"/>
+	</extraSourceFiles>
+</modDesc>

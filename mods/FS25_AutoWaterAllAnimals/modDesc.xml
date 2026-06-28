@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" standalone="no" ?>
+<modDesc descVersion="104">
+    <author>Markus Uhl</author>
+    <version>1.0.0.0</version>
+    <multiplayer supported="true" />
+    <title>
+        <de>Auto-Wasser für alle Tiere</de>
+        <en>Auto Water for All Animals</en>
+    </title>
+    <description>
+        <de> <![CDATA[ Füllt das Tränkwasser JEDER eigenen Tierhaltung täglich um 10 Uhr automatisch auf -- inklusive Weiden und Custom-/Map-Ställe (anders als die Vorlage, die nur die vier Vanilla-Kleinställe kannte). Es wird nur befüllt, wenn Tiere vorhanden sind, die Haltung Wasser braucht und der Hof genug Guthaben hat. Die Wasserkosten werden vom Konto abgezogen. Eigene Mod, nicht zur Weiterverteilung. ]]> </de>
+        <en> <![CDATA[ Automatically tops up the drinking water of EVERY owned animal husbandry every day at 10:00 -- including pastures and custom/map stalls (unlike the original, which only matched the four vanilla small barns). Only fills when animals are present, the husbandry uses water, and the farm can afford it. Water cost is deducted from the account. Personal mod, not for redistribution. ]]> </en>
+    </description>
+    <iconFilename>icon_AutoWaterAllAnimals.dds</iconFilename>
+    <extraSourceFiles>
+        <sourceFile filename="scripts/AutoWaterForAllAnimals.lua"/>
+    </extraSourceFiles>
+</modDesc>
