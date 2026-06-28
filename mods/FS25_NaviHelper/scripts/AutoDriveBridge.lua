@@ -13,6 +13,15 @@ NaviHelperAD._fieldCache = {}   -- per-waypoint "on field ground?" memo (static 
 
 local LOG_PREFIX = "[NaviHelper]"
 
+-- Gated routing diagnostics (graph dump + per-call path trace). Off by default; flip to true to
+-- log why a route falls back to an air-line bridge (graph fragmentation, unreachable destination).
+NaviHelperAD.DEBUG = false
+NaviHelperAD._lastDbg = 0
+local function dbg(fmt, ...)
+    if not NaviHelperAD.DEBUG or not Logging or not Logging.info then return end
+    Logging.info(LOG_PREFIX .. " [DBG] " .. fmt, ...)
+end
+
 -- Identify AutoDrive by presence of ADGraphManager (required for routing)
 local function findADGraphManager()
     if _G.ADGraphManager and type(_G.ADGraphManager) == "table" then
@@ -67,6 +76,27 @@ function NaviHelperAD.isAvailable()
         local ad = findAutoDriveTable()
         NaviHelperAD.cachedAD = ad
         NaviHelperAD.version = ad and ad.version or "unknown"
+        -- [SAM diag] one-time dump of the discovered graph: how many waypoints and what fields a
+        -- waypoint actually has (reveals renamed adjacency fields in AD 3.0.1.2).
+        if NaviHelperAD.DEBUG and not NaviHelperAD._dumpedGraph then
+            NaviHelperAD._dumpedGraph = true
+            local okc, wps = pcall(gm.getWayPoints, gm)
+            local n, keys, adjSample = 0, "?", "?"
+            if okc and type(wps) == "table" then
+                for id, wp in pairs(wps) do
+                    n = n + 1
+                    if n == 1 and type(wp) == "table" then
+                        local ks = {}
+                        for k, v in pairs(wp) do ks[#ks + 1] = tostring(k) .. ":" .. type(v) end
+                        keys = table.concat(ks, ",")
+                        local function cnt(t) if type(t) ~= "table" then return "n/a" end local c = 0 for _ in pairs(t) do c = c + 1 end return tostring(c) end
+                        adjSample = "out=" .. cnt(wp.out) .. " incoming=" .. cnt(wp.incoming) .. " outgoing=" .. cnt(wp.outgoing)
+                    end
+                end
+            end
+            dbg("graph: getWayPoints ok=%s count=%d | wp.fields={%s} | adj{%s} | pathFromTo=%s",
+                tostring(okc), n, keys, adjSample, type(gm.pathFromTo))
+        end
         return true
     end
     NaviHelperAD.cachedGraph = false
@@ -327,6 +357,54 @@ local function forwardPreferredNeighbors(gm, startId, headX, headZ)
     return pref
 end
 
+-- Flood the UNDIRECTED connected component reachable from startId. Returns a set { [id]=true }.
+local function reachableComponent(gm, startId)
+    local wps = gm:getWayPoints()
+    if type(wps) ~= "table" or wps[startId] == nil then return nil end
+    local seen, stack = { [startId] = true }, { startId }
+    while #stack > 0 do
+        local cid = table.remove(stack)
+        local cwp = wps[cid]
+        if cwp then
+            if type(cwp.out) == "table" then
+                for _, o in pairs(cwp.out) do if wps[o] and not seen[o] then seen[o] = true; stack[#stack + 1] = o end end
+            end
+            if type(cwp.incoming) == "table" then
+                for _, o in pairs(cwp.incoming) do if wps[o] and not seen[o] then seen[o] = true; stack[#stack + 1] = o end end
+            end
+        end
+    end
+    return seen
+end
+
+-- When start and destination are NOT connected on the AD graph (incomplete / fragmented course),
+-- route as far along the roads as possible TOWARD the destination: pick the node in the start's
+-- connected component that lies closest to the destination and A*-route to it. The caller then
+-- bridges the remaining gap to the click with a straight air-line. Returns (path, gapMetres) or nil.
+local function partialRouteTowardDest(gm, startId, destX, destZ, headX, headZ)
+    local comp = reachableComponent(gm, startId)
+    if comp == nil then return nil end
+    local wps = gm:getWayPoints()
+    local bestId, bestD2 = nil, math.huge
+    for id in pairs(comp) do
+        local w = wps[id]
+        if w then
+            local dx, dz = w.x - destX, w.z - destZ
+            local d2 = dx * dx + dz * dz
+            if d2 < bestD2 then bestD2 = d2; bestId = id end
+        end
+    end
+    if bestId == nil then return nil end
+    local gap = math.sqrt(bestD2)
+    if bestId == startId then
+        local s = wps[startId]
+        return { { x = s.x, y = s.y or 0, z = s.z } }, gap
+    end
+    local okA, p = pcall(undirectedAStar, gm, startId, bestId, headX, headZ)
+    if okA and type(p) == "table" and #p > 0 then return p, gap end
+    return nil
+end
+
 -- Get path from world position to world position. Returns list of {x,y,z} or nil.
 -- headX/headZ (optional) = vehicle forward vector, used to avoid an opening U-turn.
 function NaviHelperAD.getPathFromToWorld(startX, startZ, destX, destZ, headX, headZ)
@@ -335,16 +413,40 @@ function NaviHelperAD.getPathFromToWorld(startX, startZ, destX, destZ, headX, he
     local gm = NaviHelperAD.cachedGraph
     if not gm then return nil end
 
+    -- [SAM diag] throttle the per-call trace (reroutes fire ~every few seconds).
+    local now = (g_currentMission and g_currentMission.time) or 0
+    local trace = NaviHelperAD.DEBUG and (now - (NaviHelperAD._lastDbg or 0) > 1200)
+    if trace then NaviHelperAD._lastDbg = now end
+    local function nodeDist(id, wx, wz)
+        if not id then return "nil" end
+        local w = gm:getWayPoints()[id]
+        if not w then return "wp?" end
+        local dx, dz = w.x - wx, w.z - wz
+        return string.format("%.1f", math.sqrt(dx * dx + dz * dz))
+    end
+
     -- Start resolves heading-aware (prefer a node ahead of the vehicle).
     local ok, startId = pcall(startNodeToWorld, gm, startX, startZ, headX, headZ)
-    if not ok or not startId then return nil end
+    if not ok or not startId then
+        if trace then dbg("path: startId FAIL (ok=%s) at (%.0f,%.0f)", tostring(ok), startX, startZ) end
+        return nil
+    end
     -- Destination resolves to the field ENTRANCE when the click is inside a field.
     local ok2, destId = pcall(resolveRoutingNode, gm, destX, destZ)
-    if not ok2 or not destId then return nil end
+    if not ok2 or not destId then
+        if trace then dbg("path: destId FAIL (ok=%s) at (%.0f,%.0f)", tostring(ok2), destX, destZ) end
+        return nil
+    end
+    if trace then
+        dbg("path: start=%s(d=%s) dest=%s(d=%s) from (%.0f,%.0f)->(%.0f,%.0f)",
+            tostring(startId), nodeDist(startId, startX, startZ),
+            tostring(destId), nodeDist(destId, destX, destZ), startX, startZ, destX, destZ)
+    end
 
     -- Primary: our own UNDIRECTED, field-avoiding A* — handles one-way lanes and field spirals
     -- that AutoDrive's directed pathfinder cannot.
     local okA, aPath = pcall(undirectedAStar, gm, startId, destId, headX, headZ)
+    if trace then dbg("path: A* okA=%s len=%s", tostring(okA), (type(aPath) == "table") and tostring(#aPath) or "nil") end
     if okA and type(aPath) == "table" and #aPath > 0 then
         return aPath
     end
@@ -356,7 +458,22 @@ function NaviHelperAD.getPathFromToWorld(startX, startZ, destX, destZ, headX, he
 
     local path
     ok, path = pcall(gm.pathFromTo, gm, startId, destId, preferred)
+    if trace then dbg("path: pathFromTo ok=%s len=%s", tostring(ok), (type(path) == "table") and tostring(#path) or tostring(path)) end
     if not ok or not path or type(path) ~= "table" or #path == 0 then
+        -- Neither pathfinder connects start -> dest: the AD network is incomplete/fragmented here
+        -- (the destination sits in a different component, or beyond the network's edge). Route the
+        -- COVERED part along the roads, as far toward the destination as the connected network
+        -- reaches, then bridge the remaining gap with a straight air-line to the click. The player
+        -- drives the gap manually and AD coverage resumes wherever the network does.
+        local partial, gap = partialRouteTowardDest(gm, startId, destX, destZ, headX, headZ)
+        if trace then
+            dbg("path: no through-route -> partial roads=%s + air-line gap=%.0fm to click",
+                partial and tostring(#partial) or "nil", gap or -1)
+        end
+        if partial and #partial > 0 then
+            partial[#partial + 1] = { x = destX, y = 0, z = destZ }  -- air-line bridge to the click
+            return partial
+        end
         return nil
     end
 
