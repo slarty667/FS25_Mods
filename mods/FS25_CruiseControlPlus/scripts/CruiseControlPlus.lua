@@ -15,40 +15,36 @@ local function log(fmt, ...)
 end
 
 ---------------------------------------------------------------------------
--- Get current speed in km/h. lastSpeed/motor.lastSpeed are m/s (kmh = speed * 3.6).
--- getLastSpeed() in FS25 returns km/h, so use raw value as kmh when that source is used.
+-- Get current speed in km/h.
+-- IMPORTANT unit facts (GIANTS engine, verified against GDN "Vehicle Speed"):
+--   * vehicle:getLastSpeed() returns km/h directly (== self.lastSpeed * 3600). AUTHORITATIVE.
+--   * vehicle.lastSpeed / motor.lastSpeed are in m/ms (metres per millisecond), NOT m/s.
+--     To get km/h from them you multiply by 3600, never by 3.6.
+-- The old code preferred vehicle.lastSpeed and multiplied by 3.6 (off by 1000x), so above
+-- ~36 km/h (lastSpeed >= 0.01) it produced ~0 and clamped the cruise target to 1 km/h.
+-- Fix: trust getLastSpeed(); only fall back to lastSpeed * 3600 if the method is missing.
 ---------------------------------------------------------------------------
 function CruiseControlPlus.getCurrentSpeedKmh(vehicle, config)
     if not vehicle then return nil end
-    local speedMs = nil
-    local speedSource = "none"
-    if vehicle.lastSpeed ~= nil then
-        speedMs = math.abs(vehicle.lastSpeed)
-        speedSource = "lastSpeed"
-    end
-    if (speedMs == nil or speedMs < 0.01) and vehicle.spec_motorized and vehicle.spec_motorized.motor and vehicle.spec_motorized.motor.lastSpeed ~= nil then
-        speedMs = math.abs(vehicle.spec_motorized.motor.lastSpeed)
-        speedSource = "motor"
-    end
-    if (speedMs == nil or speedMs < 0.01) and vehicle.getLastSpeed and type(vehicle.getLastSpeed) == "function" then
+    local kmh = nil
+    if type(vehicle.getLastSpeed) == "function" then
         local gs = vehicle:getLastSpeed()
-        if gs ~= nil and type(gs) == "number" then
-            speedMs = math.abs(gs)
-            speedSource = "getLastSpeed"
-        end
+        if type(gs) == "number" then kmh = math.abs(gs) end
     end
-    if speedMs == nil or speedMs < 0.01 then return nil end
-    -- getLastSpeed() in FS25 returns km/h; lastSpeed/motor.lastSpeed are m/s (GDN). Do not * 3.6 when source is getLastSpeed.
-    local kmh = (speedSource == "getLastSpeed") and speedMs or (speedMs * 3.6)
+    if kmh == nil and type(vehicle.lastSpeed) == "number" then
+        kmh = math.abs(vehicle.lastSpeed) * 3600  -- m/ms -> km/h
+    end
+    if kmh == nil then return nil end
+
     config = config or CruiseControlPlusSettings or {}
     local step = (config.roundingStepKmh and config.roundingStepKmh > 0) and config.roundingStepKmh or 1
-    local minKmh = (config.minKmh ~= nil and config.minKmh >= 0) and config.minKmh or 0.5
+    local minKmh = (config.minKmh ~= nil and config.minKmh >= 0) and config.minKmh or 1
     local maxKmh = (config.maxKmh ~= nil and config.maxKmh > 0) and config.maxKmh or nil
 
     kmh = math.floor(kmh / step + 0.5) * step
-    if kmh < minKmh then
-        if speedMs > 0 then kmh = math.max(1, minKmh) else return nil end
-    end
+    -- Below the minimum is treated as "too low" so the caller can show the warning,
+    -- instead of silently locking the cruise target to a bogus 1 km/h.
+    if kmh < minKmh then return nil end
     if maxKmh and kmh > maxKmh then kmh = maxKmh end
     return math.floor(kmh + 0.5)
 end
