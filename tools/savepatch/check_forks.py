@@ -55,6 +55,11 @@ FORKS = {
         "source": "ModHub? - auto-update risk (verify)",
         "reapply": "re-run patch_lostcargo_mod.py --apply, then fsmods use <profile>",
     },
+    "FS25_InputHelpPager": {
+        "markers": ["pin context prompts"],
+        "source": "ModHub - auto-update risk",
+        "reapply": "re-run patch_inputhelppager_pin.py --apply, then fsmods use <profile>",
+    },
 }
 
 
