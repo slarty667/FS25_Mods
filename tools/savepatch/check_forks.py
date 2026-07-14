@@ -55,10 +55,20 @@ FORKS = {
         "source": "ModHub? - auto-update risk (verify)",
         "reapply": "re-run patch_lostcargo_mod.py --apply, then fsmods use <profile>",
     },
-    "FS25_InputHelpPager": {
-        "markers": ["pin context prompts"],
+    "FS25_LicensePlateRandomizer": {
+        "markers": ["mac left-ctrl dup finder"],
         "source": "ModHub - auto-update risk",
-        "reapply": "re-run patch_inputhelppager_pin.py --apply, then fsmods use <profile>",
+        "reapply": "re-run patch_licenseplate_mac_ctrl.py --apply, then fsmods use <profile>",
+    },
+    "FS25_LivestockVisibility": {
+        "markers": ["mac left-ctrl livestock panel"],
+        "source": "ModHub - auto-update risk",
+        "reapply": "re-run patch_livestockvisibility_mac_ctrl.py --apply, then fsmods use <profile>",
+    },
+    "FS25_Courseplay": {
+        "markers": ["guard nil courseDisplay"],
+        "source": "GitHub Courseplay/Courseplay_FS25 (+ModHub) - update risk",
+        "reapply": "re-run patch_courseplay_coursedisplay_nil.py --apply, then fsmods use <profile>",
     },
 }
 

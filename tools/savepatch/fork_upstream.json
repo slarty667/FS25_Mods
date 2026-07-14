@@ -1,0 +1,54 @@
+{
+  "_doc": "Upstream-Baseline-Register fuer unsere gepatchten Mods. baseline_version = die UPSTREAM-Version, auf der unser Patch fusst (unsere Patches zaehlen <version> NICHT hoch, also == modDesc der Library-Zip). check_upstream.py holt die AKTUELLE Upstream-Version je Quelle und vergleicht gegen baseline_version. Real update -> re-fork noetig. Nach jedem Re-Fork: baseline_version hier hochsetzen.",
+  "forks": {
+    "FS25_LicensePlateRandomizer": {
+      "baseline_version": "1.0.2.0",
+      "patch_script": "patch_licenseplate_mac_ctrl.py",
+      "sources": [
+        { "type": "modhub", "id": "358677" }
+      ],
+      "search_query": "Farming Simulator 25 License Plate Randomizer ModHub version"
+    },
+    "FS25_LivestockVisibility": {
+      "baseline_version": "1.0.0.0",
+      "patch_script": "patch_livestockvisibility_mac_ctrl.py",
+      "sources": [
+        { "type": "modhub", "id": "364457" }
+      ],
+      "search_query": "Farming Simulator 25 Livestock Visibility mod ModHub version"
+    },
+    "FS25_AdditionalContracts": {
+      "baseline_version": "1.0.0.6",
+      "patch_script": "patch_lostcargo_mod.py",
+      "sources": [
+        { "type": "modhub", "id": "328503" }
+      ],
+      "search_query": "Farming Simulator 25 Additional Contracts mod ModHub version"
+    },
+    "FS25_woodChipsMission": {
+      "baseline_version": "1.1.0.0",
+      "patch_script": "patch_woodchips_*.py (all 5)",
+      "sources": [
+        { "type": "modhub", "id": "351625" }
+      ],
+      "search_query": "FS25 Wood Chips Missions htModding version download"
+    },
+    "FS25_FieldsOfStories": {
+      "baseline_version": "1.0.0.1",
+      "patch_script": "patch_fos_probe_neighborhood.py",
+      "sources": [
+        { "type": "github", "repo": "AirFoxTwo/FS25_FieldsOfStories" },
+        { "type": "modhub", "id": "360158" }
+      ],
+      "search_query": "FS25 Fields of Stories AirFoxTwo version download"
+    },
+    "FS25_Courseplay": {
+      "baseline_version": "8.1.0.3",
+      "patch_script": "patch_courseplay_coursedisplay_nil.py",
+      "sources": [
+        { "type": "github", "repo": "Courseplay/Courseplay_FS25" }
+      ],
+      "search_query": "Courseplay FS25 version release github"
+    }
+  }
+}
