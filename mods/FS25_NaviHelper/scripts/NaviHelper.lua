@@ -70,6 +70,7 @@ NaviHelper.routeLineMaxSegments = 50  -- segments to draw (was 20 for perf test;
 -- Set false to disable route line on ground (use if ADDrawingManager causes 4 FPS / accumulation).
 NaviHelper.drawRouteOnGround = true
 NaviHelper.drawRouteOnMinimap = true   -- breadcrumb the route on the small HUD minimap (bottom-left)
+NaviHelper.MINIMAP_DEBUG = true        -- temp: log the HUD minimap state so we can gate on "small round only"
 -- Route line I3D: when available we use AutoDrive's drawing/line.i3d (our scene, so it is not cleared).
 NaviHelper.AUTODRIVE_MOD_NAME = "FS25_AutoDrive"
 NaviHelper.routeLineRootNode = nil
@@ -1374,10 +1375,10 @@ function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath, tur
         end)
     end
 
-    -- Text: distance number (just the number), destination, total.
+    -- Text: just the turn distance (when a turn is near) and the destination name. The total
+    -- distance was removed on purpose — for driving you only need to know WHEN the next turn is.
     local renderFn = renderText or renderTextOverlay
     if not renderFn then return end
-    local totalStr = (distTotal and distTotal < 1e6) and string.format("%.0f m", distTotal) or "-"
     pcall(function()
         if setTextAlignment then setTextAlignment(RenderText and RenderText.ALIGN_CENTER or 1) end
         if setTextColor then setTextColor(1, 1, 1, 1) end
@@ -1387,7 +1388,6 @@ function NaviHelper:drawHud(distTotal, turnDist, turnDir, destName, effPath, tur
         if destName and destName ~= "" then
             renderFn(cx, cy + 0.012, 0.015, destName)
         end
-        renderFn(cx, cy, 0.015, tr("NAVIHELPER_HUD_TOTAL", "Total") .. ": " .. totalStr)
     end)
 end
 
@@ -1424,8 +1424,47 @@ end
 
 -- Breadcrumb the active route onto the small HUD minimap (bottom-left), every frame, so you get
 -- the "big picture" at a glance like a real sat-nav. Mirrors the ESC-map drawing via worldToMinimapPos.
+-- True when the game HUD is currently shown; false in "hudless" mode (player hid the HUD).
+-- Robust feature-detection with a fail-OPEN default, since the exact field name can vary.
+function NaviHelper:isGameHudVisible()
+    local m = g_currentMission
+    if m == nil then return true end
+    if type(m.getIsHudVisible) == "function" then
+        local ok, v = pcall(m.getIsHudVisible, m); if ok and v ~= nil then return v ~= false end
+    end
+    local hud = m.hud
+    if hud ~= nil then
+        if type(hud.getIsVisible) == "function" then
+            local ok, v = pcall(hud.getIsVisible, hud); if ok and v ~= nil then return v ~= false end
+        end
+        if hud.isVisible ~= nil then return hud.isVisible ~= false end
+    end
+    return true
+end
+
 function NaviHelper:drawMinimapRoute()
     if not NaviHelper.drawRouteOnMinimap then return end
+
+    -- Only breadcrumb while the HUD (and thus its minimap) is on screen. In hudless mode the minimap
+    -- is gone, so the dots must go too. Fail-OPEN if we can't determine it.
+    local hudVis = self:isGameHudVisible()
+    local hud = g_currentMission and g_currentMission.hud
+    local im = hud and (hud.ingameMap or (type(hud.getIngameMap) == "function" and hud:getIngameMap()))
+    local imVis = nil
+    if im ~= nil and type(im.getIsVisible) == "function" then
+        local ok, v = pcall(im.getIsVisible, im); if ok then imVis = v end
+    end
+    if NaviHelper.MINIMAP_DEBUG and Logging and Logging.info then
+        local now = (g_currentMission and g_currentMission.time) or 0
+        if now - (NaviHelper._mmDbgT or 0) > 800 then
+            NaviHelper._mmDbgT = now
+            Logging.info("[NaviHelper] [MMDBG] hudVisible=%s minimap.getIsVisible=%s hud.isVisible=%s",
+                tostring(hudVis), tostring(imVis), tostring(hud and hud.isVisible))
+        end
+    end
+    if not hudVis then return end        -- hudless mode -> no breadcrumb
+    if imVis == false then return end    -- minimap itself toggled off -> no breadcrumb
+
     if NaviHelper.dotOverlayId == nil and createImageOverlay ~= nil and NaviHelper.modDirectory then
         NaviHelper.dotOverlayId = createImageOverlay(NaviHelper.modDirectory .. "textures/dot.png")
     end
@@ -1493,11 +1532,14 @@ function NaviHelper:mouseEvent(posX, posY, isDown, isUp, button)
         end
         log("HUD moved to %.3f, %.3f", NaviHelper.hudCenterX, NaviHelper.hudCenterY)
     elseif NaviHelper.hudDragging then
-        -- Drag: follow the cursor, keeping the grab offset, clamped so it stays fully on screen.
+        -- Drag: follow the cursor, keeping the grab offset. Clamp against the widget's ACTUAL
+        -- bounding box (not a fixed margin) so it can be pushed flush to any screen edge.
         local nx = posX - (NaviHelper.hudGrabDX or 0)
         local ny = posY - (NaviHelper.hudGrabDY or 0)
-        NaviHelper.hudCenterX = math.max(0.08, math.min(0.92, nx))
-        NaviHelper.hudCenterY = math.max(0.04, math.min(0.80, ny))
+        local halfW = 0.06                     -- widget half-width (see hudWidgetBox)
+        local topExtent = 0.07 + 0.045 * aspect  -- how far the box reaches above the centre
+        NaviHelper.hudCenterX = math.max(halfW, math.min(1 - halfW, nx))
+        NaviHelper.hudCenterY = math.max(0.02, math.min(1 - topExtent, ny))
     end
 end
 
