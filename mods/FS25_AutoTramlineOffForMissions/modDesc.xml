@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="108">
+	<author>SAM</author>
+	<version>1.0.0.0</version>
+	<iconFilename>storeItem.png</iconFilename>
+	<iconFilenameSmall>storeItem.png</iconFilenameSmall>
+	<title>
+		<en>Auto Tramline-Off for Missions</en>
+		<de>Fahrgassen auf Auftragsfeldern automatisch aus</de>
+	</title>
+	<description>
+		<en>Keeps NPC / contract fields free of tramlines ("Fahrgassen"), with zero interaction. Two levers: (1) turns off Precision Farming's tramline generation for NPC/AI fields at the source, so no new ones appear; (2) strips tramlines from contract fields (fertilize, spray/herbicide, hoe, weed) when a mission is generated and sweeps existing contracts on load. Your own seeder-created tramlines are untouched. Uses Precision Farming's own API directly (standalone, no other mod required). Fixes fields that spawn with unwanted tramlines and the mission bugs tied to them (e.g. roller missions stuck near 100%).</en>
+		<de>Haelt NPC-/Auftragsfelder frei von Fahrgassen, ohne Zutun. Zwei Hebel: (1) schaltet PFs Fahrgassen-Generierung fuer NPC-/Fremdfelder an der Quelle ab, damit keine neuen entstehen; (2) entfernt Fahrgassen von Auftragsfeldern (Duengen, Spritzen/Herbizid, Hacken, Striegeln) sobald ein Auftrag entsteht und raeumt bestehende beim Laden auf. Deine selbst gesaeten Fahrgassen bleiben unberuehrt. Nutzt PFs eigene API direkt (standalone, kein weiterer Mod noetig). Behebt Felder, die mit ungewollten Fahrgassen spawnen, und die daran haengenden Auftrags-Bugs (z.B. Walzen-Auftraege, die bei ~100% haengen).</de>
+	</description>
+	<dependencies>
+		<dependency>FS25_precisionFarming</dependency>
+	</dependencies>
+	<extraSourceFiles>
+		<sourceFile filename="register.lua"/>
+	</extraSourceFiles>
+</modDesc>
