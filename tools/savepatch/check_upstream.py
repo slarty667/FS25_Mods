@@ -175,10 +175,57 @@ def main():
         else:
             print("    == up to date (upstream == baseline).")
 
+    # --- Watchlist: mods we do NOT patch, only monitor for maturity / new versions ---
+    watch_updates = 0
+    watchlist = reg.get("watchlist", {})
+    if watchlist:
+        print("\n" + "-" * 64)
+        print("WATCHLIST (monitored for maturity -- NOT forks, no re-fork ever)")
+        for mod, spec in watchlist.items():
+            baseline = spec.get("baseline_version", "?")
+            print("\n### %s" % mod)
+            if spec.get("note"):
+                print("    note          : %s" % spec["note"])
+            print("    last seen     : %s" % baseline)
+
+            if args.offline:
+                print("    upstream      : (offline) -> web-search: %s" % spec.get("search_query", mod))
+                manual += 1
+                continue
+
+            best = None
+            for src in spec.get("sources", []):
+                try:
+                    if src["type"] == "modhub":
+                        v, url = modhub_version(src["id"])
+                    elif src["type"] == "github":
+                        v, url = github_version(src["repo"])
+                    else:
+                        continue
+                except (urllib.error.URLError, urllib.error.HTTPError, ValueError, TimeoutError) as e:
+                    print("    upstream      : %s fetch failed (%s)" % (src["type"], e))
+                    v, url = None, None
+                if v:
+                    print("    upstream      : %-9s  [%s] %s" % (v, src["type"], url))
+                    if best is None or cmp_ver(v, best) > 0:
+                        best = v
+
+            if best is None:
+                print("    >> could not auto-read upstream -> web-search: %s" % spec.get("search_query", mod))
+                manual += 1
+                continue
+
+            if cmp_ver(best, baseline) > 0:
+                watch_updates += 1
+                print("    >> NEW VERSION: %s > last-seen %s -> REVISIT (evaluate switching; NOT a re-fork)." % (best, baseline))
+                print("       if you adopt it, bump baseline_version in fork_upstream.json to %s." % best)
+            else:
+                print("    == no change since last seen (%s)." % baseline)
+
     print("\n" + "=" * 64)
-    print("RESULT: %d real upstream update(s), %d need manual web-search."
-          % (updates, manual))
-    sys.exit(1 if updates else 0)
+    print("RESULT: %d real upstream update(s), %d watchlist update(s), %d need manual web-search."
+          % (updates, watch_updates, manual))
+    sys.exit(1 if (updates or watch_updates) else 0)
 
 
 if __name__ == "__main__":

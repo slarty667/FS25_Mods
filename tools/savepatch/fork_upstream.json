@@ -1,5 +1,5 @@
 {
-  "_doc": "Upstream-Baseline-Register fuer unsere gepatchten Mods. baseline_version = die UPSTREAM-Version, auf der unser Patch fusst (unsere Patches zaehlen <version> NICHT hoch, also == modDesc der Library-Zip). check_upstream.py holt die AKTUELLE Upstream-Version je Quelle und vergleicht gegen baseline_version. Real update -> re-fork noetig. Nach jedem Re-Fork: baseline_version hier hochsetzen.",
+  "_doc": "Upstream-Baseline-Register fuer unsere gepatchten Mods. baseline_version = die UPSTREAM-Version, auf der unser Patch fusst (unsere Patches zaehlen <version> NICHT hoch, also == modDesc der Library-Zip). check_upstream.py holt die AKTUELLE Upstream-Version je Quelle und vergleicht gegen baseline_version. Real update -> re-fork noetig. Nach jedem Re-Fork: baseline_version hier hochsetzen. 'watchlist' (eigener Block) = Mods, die wir NICHT patchen, sondern nur auf Reife/Updates beobachten (z.B. moeglicher Ersatz fuer bestehendes Setup); neue Version -> Umstieg pruefen (KEIN re-fork), dann last-seen (baseline_version) hochsetzen.",
   "forks": {
     "FS25_LicensePlateRandomizer": {
       "baseline_version": "1.0.2.0",
@@ -49,6 +49,17 @@
         { "type": "github", "repo": "Courseplay/Courseplay_FS25" }
       ],
       "search_query": "Courseplay FS25 version release github"
+    }
+  },
+  "watchlist": {
+    "FS25_Distribution_Redux": {
+      "baseline_version": "1.0.0.1",
+      "note": "Successor to Lazy Distribution: demand-driven, works on base-game buildings, NO placeables -> would replace the chicken pseudo-silo construct (chickens pull wheat from a real silo automatically). Released 2026-07-15 by Bones, still immature (4.1*/16, active bugfixing). Wait for a more stable version, then revisit switching + deactivate Lazy Distribution. See memory fs25-open-threads item 2.",
+      "sources": [
+        { "type": "modhub", "id": "365583" },
+        { "type": "github", "repo": "Bones50/FS25-Distribution-Redux" }
+      ],
+      "search_query": "FS25 Distribution Redux Bones ModHub version"
     }
   }
 }
